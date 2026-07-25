@@ -4,20 +4,22 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-askama = "0.16.0"
-axum = { version = "0.8.9", features = ["macros"] }
-axum-login = "0.18.0"
-base64 = "0.22.1"
-openidconnect = "4.0.1"
-rand = "0.8.6"
-reqwest = { version = "0.12.28", features = ["native-tls"] }
-rsa = { version = "0.9.10", features = ["sha2"] }
+anyhow = "1.0.102"
+axum = { version = "0.8.9", features = ["ws"] }
+futures-util = "0.3.32"
+reqwest = { version = "0.12.28", features = ["native-tls", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
-sqlx = { version = "0.8.6", features = ["postgres"] }
-thiserror = "2.0.18"
-tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
-tower-sessions-core = { version = "0.14.0", features = ["axum-core"] }
-tower-sessions-moka-store = "0.15.0"
-tower-sessions-sqlx-store = { version = "0.15.0", features = ["postgres"] }
+serde_json = "1.0.149"
+serde_urlencoded = "0.7.1"
+sha2 = "0.10.9"
+sqlx = { version = "0.8.6", default-features = false, features = ["macros", "migrate", "postgres", "runtime-tokio", "uuid"] }
+tokio = { version = "1.52.3", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tokio-tungstenite = "0.29.0"
+tower-http = { version = "0.6.8", features = ["trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = "2.5.8"
+uuid = "1.21.0"
+
+[dev-dependencies]
+tower = { version = "0.5.3", features = ["util"] }

@@ -1,23 +1,24 @@
-//! Run with
-//!
-//! ```not_rust
-//! cargo run -p example-openid-connect
-//! ```
+use anyhow::Context as _;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::web::App;
+use crate::{app::App, config::Config};
 
-mod users;
-mod web;
+mod api;
+mod app;
+mod config;
+mod proxy;
+mod store;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
-        .with(EnvFilter::new(std::env::var("RUST_LOG").unwrap_or_else(
-            |_| "axum_login=debug,tower_sessions=debug,sqlx=warn,tower_http=debug".into(),
-        )))
+        .with(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "zed_auth=info,tower_http=info,sqlx=warn".into()),
+        )
         .with(tracing_subscriber::fmt::layer())
-        .try_init()?;
+        .try_init()
+        .context("failed to initialize tracing")?;
 
-    App::new().await?.serve().await
+    App::new(Config::from_env()?).await?.serve().await
 }
