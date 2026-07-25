@@ -9,14 +9,14 @@ Caddy.
 The facade listens internally on `http://localhost:8787` by default. That is
 also the Cloud URL used by an unmodified development-mode collab server. Caddy
 provides the public HTTPS endpoint and routes RPC, extension, Cloud, and web
-traffic to the appropriate backend. Browser sign-in through upstream Zed has
-been manually confirmed.
+traffic to the appropriate backend. Browser sign-in is delegated to upstream
+Zed.
 
 ## Zed compatibility baseline
 
-The implementation was developed against
-[zed-industries/zed@35eaeb94a7e5e9dcd7384df4bd21f01c30a38a09](https://github.com/zed-industries/zed/commit/35eaeb94a7e5e9dcd7384df4bd21f01c30a38a09),
-committed on June 25, 2026.
+The current packaged compatibility baseline is
+[zed-industries/zed@952d712dac48a4af2c54fb22c82d82a9d69b72d4](https://github.com/zed-industries/zed/commit/952d712dac48a4af2c54fb22c82d82a9d69b72d4),
+the `v1.11.3` tag from July 15, 2026.
 
 That revision is the reference baseline for:
 
@@ -36,9 +36,10 @@ Recheck these contracts when updating to a newer Zed revision.
 - Public endpoint: Caddy, configured by the NixOS module
 - Zed setting: `ZED_SERVER_URL=https://zed.example.com`
 
-Caddy redirects `/rpc` to `/actual_rpc`, then reverse proxies that WebSocket
-directly to collab's `/rpc` on port `8080`. The Rust service does not implement
-a generic HTTP or WebSocket proxy.
+Caddy redirects `/rpc` to an absolute `/actual_rpc` URL on the incoming
+authority, then reverse proxies that WebSocket directly to collab's `/rpc` on
+port `8080`. The Rust service does not implement a generic HTTP or WebSocket
+proxy.
 
 ## Setup
 
@@ -123,6 +124,27 @@ NixOS configuration:
 }
 ```
 
+For a complete local VM using the module, PostgreSQL, and Caddy:
+
+```console
+$ nix run .#vm
+```
+
+The VM forwards host `127.0.0.1:18787` to guest Caddy. Set Zed's
+`server_url` to `http://localhost:18787`. The VM uses a fixed throwaway
+internal API key from the Nix store for testing; deployments should continue
+to supply `services.zed-auth.secretsFile` from a runtime secret provisioner.
+
+Run the NixOS integration test with:
+
+```console
+$ nix build .#checks.x86_64-linux.nixos-basic
+```
+
+The test is defined in `tests/nixos/default.nix`. It boots a clean VM and
+checks database initialization, migration ordering, service users and health,
+Caddy routing, and the upstream sign-in completion redirect.
+
 The module creates a local PostgreSQL database owned by the configured system
 user, applies the schema shipped with the packaged collab server using
 `sqlx migrate`, and starts both collab and the facade. The facade applies its
@@ -132,7 +154,7 @@ mechanism and should contain the shared database URL and internal API key using
 the uppercase keys expected by upstream collab:
 
 ```toml
-DATABASE_URL = "postgres://%2Frun%2Fpostgresql/zed"
+DATABASE_URL = "postgres://zed@%2Frun%2Fpostgresql/zed"
 ZED_CLOUD_INTERNAL_API_KEY = "your-local-secret"
 ```
 
@@ -155,6 +177,14 @@ listens only on loopback. The module enables Caddy and configures the complete
 public reverse proxy; configure `services.caddy.openFirewall` as usual if Caddy
 should open ports 80 and 443.
 
+The upstream collab migration is currently a full schema snapshot whose
+numeric SQLx version has remained unchanged across Zed releases. If upstream
+edits that file, SQLx rejects an existing database because its recorded
+checksum no longer matches; it does not derive an incremental upgrade.
+Therefore, before advancing this project's Zed baseline across a schema
+change, add and test a project-owned incremental migration for existing
+databases. A fresh database continues to use the packaged upstream snapshot.
+
 ### Start Zed
 
 ```sh
@@ -164,6 +194,20 @@ ZED_SERVER_URL=https://zed.example.com nix develop -c cargo run --package=zed
 
 Sign in normally. The browser uses upstream `zed.dev`, while subsequent Cloud
 and collaboration requests go through the local facade.
+
+### Upstream service terms
+
+Zed's open-source licenses govern the packaged software, but use of
+Zed-operated authentication, API, extension, and web services is separately
+subject to the [Zed Terms of Service](https://zed.dev/terms). This project is
+unofficial, and Zed does not currently document this hybrid self-hosting setup
+as a supported service-access mechanism. In particular, the Terms restrict
+access to non-public service APIs and require use of Zed-designated access
+mechanisms. Obtain Zed's confirmation before operating this for third parties.
+
+This project does not proxy Zed-hosted LLM requests. It returns a local empty
+model catalog, leaving Zed's supported direct-provider, gateway, and local
+model integrations available to each client.
 
 ## Authentication and user synchronization
 
@@ -233,17 +277,21 @@ and search results.
 The facade handles only:
 
 - `GET /native_app_signin`: redirect to upstream native sign-in
-- `GET /native_app_signin_succeeded`: local success page
 - `GET /client/users/me`: upstream validation and local synchronization
 - `GET /client/users/connect`: local keepalive WebSocket
 - `PATCH` or `POST /client/system_settings`: local minimal response
-- `POST /client/llm_tokens`: returns `403`
+- `POST /client/llm_tokens`: returns a non-secret local placeholder token after
+  authenticating the user
 - client feedback routes: return `204`
 
 The module's Caddy virtual host uses named matchers to route:
 
-- `/rpc`: temporary redirect to `/actual_rpc`
+- `/rpc`: temporary redirect to the absolute `/actual_rpc` URL for the
+  incoming scheme and authority
+- `/native_app_signin_succeeded`: redirect to upstream Zed's static
+  confirmation page
 - `/actual_rpc`: rewrite to `/rpc` and WebSocket proxy directly to collab
+- `/models`: return an empty hosted-model catalog locally
 - facade-owned routes: proxy to `127.0.0.1:8787`
 - `/extensions*`: proxy to `https://api.zed.dev`
 - remaining `/client/*`: proxy to upstream Cloud
@@ -254,7 +302,7 @@ The module's Caddy virtual host uses named matchers to route:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `BIND_ADDRESS` | `127.0.0.1:8787` | Facade listen address |
-| `DATABASE_URL` | `postgres://%2Frun%2Fpostgresql/zed` | Shared collab Postgres database |
+| `DATABASE_URL` | `postgres://zed@%2Frun%2Fpostgresql/zed` | Shared collab Postgres database |
 | `UPSTREAM_WEB_URL` | `https://zed.dev` | Native sign-in origin |
 | `UPSTREAM_CLOUD_URL` | `https://cloud.zed.dev` | Credential validation origin |
 | `ZED_CLOUD_INTERNAL_API_KEY` | `internal-api-key-secret` | Shared local internal API secret |
@@ -264,7 +312,9 @@ The module's Caddy virtual host uses named matchers to route:
 
 ## Validation status
 
-- Upstream browser sign-in works end to end.
+- Upstream browser handoff, callback, and complete authentication work against
+  the packaged baseline above.
+- The local collab RPC connection works through Caddy.
 - Rust formatting and Clippy with warnings denied pass.
 - The regular Rust tests pass.
 - The opt-in auth/database integration test passes against Postgres initialized

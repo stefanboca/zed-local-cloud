@@ -56,10 +56,6 @@ impl App {
         Router::new()
             .route("/healthz", get(api::health))
             .route("/native_app_signin", get(api::native_app_sign_in))
-            .route(
-                "/native_app_signin_succeeded",
-                get(api::native_app_sign_in_succeeded),
-            )
             .route("/client/users/me", get(api::authenticated_user))
             .route("/client/users/connect", get(api::users_connect))
             .route(

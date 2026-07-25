@@ -4,7 +4,7 @@ use axum::{
     Json,
     extract::{Query, State, WebSocketUpgrade, ws},
     http::{HeaderMap, StatusCode, header},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{IntoResponse, Redirect, Response},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -90,16 +90,6 @@ pub async fn native_app_sign_in(
         Some(&query),
     );
     Ok(Redirect::temporary(url.as_str()))
-}
-
-pub async fn native_app_sign_in_succeeded() -> Html<&'static str> {
-    Html(
-        r#"<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><title>Signed in to Zed</title></head>
-<body><main><h1>Signed in</h1><p>You can close this window and return to Zed.</p></main></body>
-</html>"#,
-    )
 }
 
 pub async fn authenticated_user(
@@ -204,9 +194,9 @@ pub async fn update_system_settings(
 pub async fn llm_tokens(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<StatusCode, AppError> {
+) -> Result<Json<Value>, AppError> {
     validate_cached_credentials(&state, &headers).await?;
-    Ok(StatusCode::FORBIDDEN)
+    Ok(Json(json!({"token": "local-ai-disabled"})))
 }
 
 pub async fn ignore_feedback(

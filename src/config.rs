@@ -52,9 +52,9 @@ impl Config {
 
         Ok(Self {
             bind_address,
-            database_url: secrets
-                .database_url
-                .unwrap_or_else(|| env_or("DATABASE_URL", "postgres://%2Frun%2Fpostgresql/zed")),
+            database_url: secrets.database_url.unwrap_or_else(|| {
+                env_or("DATABASE_URL", "postgres://zed@%2Frun%2Fpostgresql/zed")
+            }),
             upstream_web_url,
             upstream_cloud_url,
             internal_api_key,

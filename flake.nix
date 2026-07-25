@@ -14,6 +14,7 @@
   }: let
     inherit (nixpkgs) lib;
     inherit (lib.attrsets) genAttrs mapAttrs' nameValuePair;
+    inherit (lib.meta) getExe;
     inherit (lib.strings) makeLibraryPath;
 
     systems = ["x86_64-linux" "aarch64-linux"];
@@ -40,12 +41,37 @@
       };
     });
 
+    apps = forAllSystems (system: let
+      pkgs = nixpkgsFor.${system};
+      vm = import ./vm.nix {
+        inherit lib nixpkgs pkgs system;
+        module = self.nixosModules.default;
+        overlay = self.overlays.default;
+      };
+    in {
+      vm = {
+        type = "app";
+        program = getExe vm.config.system.build.vm;
+        meta = {
+          description = "Start a Zed auth and collab test VM";
+          nixosConfiguration = vm;
+        };
+      };
+    });
+
     formatter = forAllSystems (system: treefmtFor.${system}.config.build.wrapper);
     checks = forAllSystems (system: let
+      pkgs = nixpkgsFor.${system};
       packages = mapAttrs' (n: nameValuePair "package-${n}") self.packages.${system};
       devShells = mapAttrs' (n: nameValuePair "devShell-${n}") self.devShells.${system};
       formatting = {formatting = treefmtFor.${system}.config.build.check self;};
+      nixos = import ./tests/nixos {
+        inherit pkgs;
+        module = self.nixosModules.default;
+        zedAuthPackage = self.packages.${system}.zed-auth;
+        zedCollabPackage = self.packages.${system}.zed-collab;
+      };
     in
-      packages // devShells // formatting);
+      packages // devShells // formatting // nixos);
   };
 }

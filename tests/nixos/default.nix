@@ -1,0 +1,111 @@
+{
+  module,
+  pkgs,
+  zedAuthPackage,
+  zedCollabPackage,
+}: {
+  nixos-basic = pkgs.testers.runNixOSTest {
+    name = "zed-auth-basic";
+
+    nodes.machine = {pkgs, ...}: let
+      secrets = pkgs.writeText "zed-auth-test.toml" ''
+        DATABASE_URL = "postgres://zed@%2Frun%2Fpostgresql/zed"
+        ZED_CLOUD_INTERNAL_API_KEY = "zed-auth-test-internal-api-key"
+      '';
+    in {
+      imports = [module];
+
+      services.zed-auth = {
+        enable = true;
+        package = zedAuthPackage;
+        virtualHost = "http://localhost";
+        secretsFile = toString secrets;
+        collab.package = zedCollabPackage;
+      };
+    };
+
+    testScript = ''
+      import json
+
+      start_all()
+
+      for unit in [
+          "postgresql.target",
+          "zed-collab-database-migrate.service",
+          "zed-auth.service",
+          "zed-collab.service",
+          "caddy.service",
+      ]:
+          machine.wait_for_unit(unit)
+
+      machine.wait_for_open_port(80)
+
+      failed_units = machine.succeed(
+          "systemctl list-units --state=failed --no-legend --plain"
+      )
+      assert failed_units.strip() == "", failed_units
+
+      for unit in [
+          "zed-collab-database-migrate.service",
+          "zed-auth.service",
+          "zed-collab.service",
+      ]:
+          user = machine.succeed(
+              f"systemctl show {unit} --property=User --value"
+          ).strip()
+          assert user == "zed", f"{unit} runs as {user!r}"
+
+      migrations = machine.succeed(
+          "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
+          "--command='SELECT version FROM _sqlx_migrations ORDER BY version'"
+      ).splitlines()
+      assert migrations == ["20251208000000", "20260724000000"], migrations
+
+      machine.succeed(
+          "runuser -u zed -- psql --dbname=zed --set=ON_ERROR_STOP=1 "
+          "--command='BEGIN; "
+          "INSERT INTO users (id, admin, connected_once) "
+          "VALUES (42, false, false); "
+          "ROLLBACK;'"
+      )
+
+      def response(path):
+          return machine.succeed(
+              "curl --silent --show-error --output /dev/null "
+              f"--write-out='%{{http_code}} %{{redirect_url}}' "
+              f"http://localhost{path}"
+          ).strip()
+
+      def location(path):
+          return machine.succeed(
+              "curl --silent --show-error --output /dev/null "
+              f"--write-out='%header{{location}}' http://localhost{path}"
+          ).strip()
+
+      assert response("/healthz") == "204"
+      assert response("/rpc") == "307 http://localhost/actual_rpc"
+      assert location("/rpc") == "http://localhost/actual_rpc"
+      rpc_location_with_port = machine.succeed(
+          "curl --silent --show-error --output /dev/null "
+          "--header='Host: localhost:18787' "
+          "--write-out='%header{location}' http://localhost/rpc"
+      ).strip()
+      assert rpc_location_with_port == "http://localhost:18787/actual_rpc"
+      assert response("/actual_rpc") == "401"
+      assert response("/client/users/me") == "401"
+      assert response("/models") == "200"
+      models = machine.succeed(
+          "curl --silent --show-error http://localhost/models"
+      )
+      assert json.loads(models) == {
+          "models": [],
+          "default_model": None,
+          "default_fast_model": None,
+          "recommended_models": [],
+      }
+      assert response("/native_app_signin_succeeded") == (
+          "302 https://zed.dev/native_app_signin_succeeded"
+      )
+    '';
+  };
+}

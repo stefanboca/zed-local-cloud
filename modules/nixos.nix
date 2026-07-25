@@ -216,15 +216,22 @@ in {
       virtualHosts.${cfg.virtualHost}.extraConfig = ''
         @rpc path /rpc
         @collab path /actual_rpc
+        @signinSucceeded path /native_app_signin_succeeded
+        @models {
+          method GET
+          path /models
+        }
         @facade {
-          path /healthz /native_app_signin /native_app_signin_succeeded /internal/* /client/users/me /client/users/connect /client/system_settings /client/llm_tokens /client/feedback/*
+          path /healthz /native_app_signin /internal/* /client/users/me /client/users/connect /client/system_settings /client/llm_tokens /client/feedback/*
         }
         @upstreamApi path /extensions /extensions/*
         @upstreamCloud path /client/*
         @upstreamWeb path /*
 
         route {
-          redir @rpc /actual_rpc 307
+          redir @rpc {http.request.scheme}://{http.request.hostport}/actual_rpc 307
+          redir @signinSucceeded ${cfg.upstreamWebUrl}/native_app_signin_succeeded 302
+          respond @models `{"models":[],"default_model":null,"default_fast_model":null,"recommended_models":[]}` 200
 
           reverse_proxy @collab 127.0.0.1:${toString cfg.collab.port} {
             rewrite /rpc
@@ -299,14 +306,14 @@ in {
 
       zed-collab-database-migrate = mkIf cfg.database.createLocally {
         description = "Migrate the Zed collab database";
-        requires = ["postgresql.service"];
-        after = ["postgresql.service"];
+        requires = ["postgresql.target"];
+        after = ["postgresql.target"];
         before = ["zed-auth.service" "zed-collab.service"];
 
         serviceConfig =
           hardening
           // {
-            ExecStart = "${getExe pkgs.sqlx-cli} migrate run --ignore-missing --source ${cfg.collab.package}/share/zed-collab/migrations --database-url postgres://%2Frun%2Fpostgresql/${cfg.database.name}";
+            ExecStart = "${getExe pkgs.sqlx-cli} migrate run --ignore-missing --source ${cfg.collab.package}/share/zed-collab/migrations --database-url postgres://${cfg.user}@%%2Frun%%2Fpostgresql/${cfg.database.name}";
             Group = cfg.group;
             RemainAfterExit = true;
             Type = "oneshot";
