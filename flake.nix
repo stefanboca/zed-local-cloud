@@ -21,8 +21,12 @@
     nixpkgsFor = forAllSystems (system: nixpkgs.legacyPackages.${system});
     treefmtFor = forAllSystems (system: treefmt-nix.lib.evalModule nixpkgsFor.${system} ./treefmt.nix);
   in {
-    packages = forAllSystems (system: {});
-    overlays.default = final: _: {};
+    packages = forAllSystems (system: import ./pkgs nixpkgsFor.${system});
+    overlays.default = _: import ./pkgs;
+
+    nixosModules = {
+      default = import ./modules/nixos.nix;
+    };
 
     devShells = forAllSystems (system: let
       pkgs = nixpkgsFor.${system};

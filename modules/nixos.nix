@@ -1,0 +1,321 @@
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}: let
+  inherit (lib.lists) optional;
+  inherit (lib.meta) getExe;
+  inherit (lib.modules) mkIf;
+  inherit (lib.options) mkEnableOption mkOption mkPackageOption;
+  inherit (lib.types) bool int listOf port str;
+
+  cfg = config.services.zed-auth;
+
+  collabEnvironment = (pkgs.formats.toml {}).generate "zed-collab.toml" {
+    DATABASE_MAX_CONNECTIONS = cfg.collab.databaseMaxConnections;
+    HTTP_PORT = cfg.collab.port;
+    LOG_JSON = cfg.collab.logJson;
+    RUST_LOG = cfg.collab.logLevel;
+    ZED_CLIENT_CHECKSUM_SEED = cfg.collab.clientChecksumSeed;
+    ZED_ENVIRONMENT = "development";
+  };
+
+  databaseMigrationService = "zed-collab-database-migrate.service";
+  databaseDependencies = optional cfg.database.createLocally databaseMigrationService;
+
+  hardening = {
+    LockPersonality = true;
+    MemoryDenyWriteExecute = true;
+    NoNewPrivileges = true;
+    PrivateDevices = true;
+    PrivateTmp = true;
+    ProtectClock = true;
+    ProtectControlGroups = true;
+    ProtectHome = true;
+    ProtectHostname = true;
+    ProtectKernelLogs = true;
+    ProtectKernelModules = true;
+    ProtectKernelTunables = true;
+    ProtectSystem = "strict";
+    RestrictNamespaces = true;
+    RestrictRealtime = true;
+    RestrictSUIDSGID = true;
+    SystemCallArchitectures = "native";
+    UMask = "0077";
+  };
+in {
+  options.services.zed-auth = {
+    enable = mkEnableOption "the local Zed authentication and collaboration stack";
+    package = mkPackageOption pkgs "zed-auth" {};
+
+    user = mkOption {
+      type = str;
+      default = "zed";
+      description = "User under which the facade and collab server run.";
+    };
+
+    group = mkOption {
+      type = str;
+      default = "zed";
+      description = "Group under which the facade and collab server run.";
+    };
+
+    host = mkOption {
+      type = str;
+      default = "127.0.0.1";
+      description = "Address on which the facade listens.";
+    };
+
+    port = mkOption {
+      type = port;
+      default = 8787;
+      description = "Port on which the facade listens.";
+    };
+
+    virtualHost = mkOption {
+      type = str;
+      example = "zed.example.com";
+      description = "Caddy virtual host serving the public Zed-compatible endpoint.";
+    };
+
+    upstreamWebUrl = mkOption {
+      type = str;
+      default = "https://zed.dev";
+      description = "Upstream origin used for native sign-in and web routes.";
+    };
+
+    upstreamApiUrl = mkOption {
+      type = str;
+      default = "https://api.zed.dev";
+      description = "Upstream origin used for extension API routes.";
+    };
+
+    upstreamCloudUrl = mkOption {
+      type = str;
+      default = "https://cloud.zed.dev";
+      description = "Upstream origin used to validate users and proxy Cloud API routes.";
+    };
+
+    adminGithubLogins = mkOption {
+      type = listOf str;
+      default = [];
+      example = ["octocat"];
+      description = "GitHub logins which receive administrator privileges in local collab.";
+    };
+
+    logLevel = mkOption {
+      type = str;
+      default = "zed_auth=info,tower_http=info,sqlx=warn";
+      description = "Tracing filter used by the facade.";
+    };
+
+    secretsFile = mkOption {
+      type = str;
+      example = "/run/secrets/zed-auth.toml";
+      description = ''
+        Runtime path to a TOML file containing DATABASE_URL and
+        ZED_CLOUD_INTERNAL_API_KEY. systemd exposes the same file to both
+        services as a credential. Use an absolute string path from a secret
+        provisioner rather than a Nix path, which would copy the source file
+        into the Nix store.
+      '';
+    };
+
+    collab = {
+      package = mkPackageOption pkgs "zed-collab" {};
+
+      port = mkOption {
+        type = port;
+        default = 8080;
+        description = "Port on which the local collab server listens.";
+      };
+
+      databaseMaxConnections = mkOption {
+        type = int;
+        default = 5;
+        description = "Maximum number of collab database connections.";
+      };
+
+      clientChecksumSeed = mkOption {
+        type = str;
+        default = "development-checksum-seed";
+        description = "Seed used for Zed client checksum validation.";
+      };
+
+      logLevel = mkOption {
+        type = str;
+        default = "info";
+        description = "Tracing filter used by collab.";
+      };
+
+      logJson = mkOption {
+        type = bool;
+        default = false;
+        description = "Whether collab emits JSON logs.";
+      };
+    };
+
+    database = {
+      createLocally = mkOption {
+        type = bool;
+        default = true;
+        description = "Whether to create and initialize a local PostgreSQL database.";
+      };
+
+      name = mkOption {
+        type = str;
+        default = "zed";
+        description = "Name of the shared collab database.";
+      };
+    };
+  };
+
+  config = mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.port == 8787;
+        message = ''
+          services.zed-auth.port must be 8787 because development-mode collab
+          uses http://localhost:8787 as its Cloud API URL.
+        '';
+      }
+      {
+        assertion = cfg.collab.databaseMaxConnections > 0;
+        message = "services.zed-auth.collab.databaseMaxConnections must be positive.";
+      }
+      {
+        assertion = !cfg.database.createLocally || cfg.database.name == cfg.user;
+        message = ''
+          services.zed-auth.database.name must equal services.zed-auth.user
+          when createLocally is enabled, so PostgreSQL peer authentication and
+          database ownership work without a password.
+        '';
+      }
+    ];
+
+    users.groups.${cfg.group} = {};
+    users.users.${cfg.user} = {
+      isSystemUser = true;
+      inherit (cfg) group;
+    };
+
+    services.postgresql = mkIf cfg.database.createLocally {
+      enable = true;
+      ensureDatabases = [cfg.database.name];
+      ensureUsers = [
+        {
+          name = cfg.user;
+          ensureDBOwnership = true;
+        }
+      ];
+    };
+
+    services.caddy = {
+      enable = true;
+      virtualHosts.${cfg.virtualHost}.extraConfig = ''
+        @rpc path /rpc
+        @collab path /actual_rpc
+        @facade {
+          path /healthz /native_app_signin /native_app_signin_succeeded /internal/* /client/users/me /client/users/connect /client/system_settings /client/llm_tokens /client/feedback/*
+        }
+        @upstreamApi path /extensions /extensions/*
+        @upstreamCloud path /client/*
+        @upstreamWeb path /*
+
+        route {
+          redir @rpc /actual_rpc 307
+
+          reverse_proxy @collab 127.0.0.1:${toString cfg.collab.port} {
+            rewrite /rpc
+          }
+          reverse_proxy @facade ${cfg.host}:${toString cfg.port}
+          reverse_proxy @upstreamApi ${cfg.upstreamApiUrl}
+          reverse_proxy @upstreamCloud ${cfg.upstreamCloudUrl}
+          reverse_proxy @upstreamWeb ${cfg.upstreamWebUrl}
+        }
+      '';
+    };
+
+    systemd.services = {
+      caddy = {
+        wants = ["zed-auth.service" "zed-collab.service"];
+        after = ["zed-auth.service" "zed-collab.service"];
+      };
+
+      zed-auth = {
+        description = "Zed local authentication facade";
+        wantedBy = ["multi-user.target"];
+        requires = databaseDependencies;
+        after = databaseDependencies;
+
+        environment = {
+          BIND_ADDRESS = "${cfg.host}:${toString cfg.port}";
+          LOCAL_ADMIN_GITHUB_LOGINS = lib.concatStringsSep "," cfg.adminGithubLogins;
+          RUST_LOG = cfg.logLevel;
+          UPSTREAM_CLOUD_URL = cfg.upstreamCloudUrl;
+          UPSTREAM_WEB_URL = cfg.upstreamWebUrl;
+        };
+
+        serviceConfig =
+          hardening
+          // {
+            ExecStart = getExe cfg.package;
+            Group = cfg.group;
+            LoadCredential = "zed-auth.toml:${cfg.secretsFile}";
+            Restart = "on-failure";
+            RestartSec = 5;
+            User = cfg.user;
+          };
+      };
+
+      zed-collab = {
+        description = "Zed collaboration server";
+        wantedBy = ["multi-user.target"];
+        requires = ["zed-auth.service"] ++ databaseDependencies;
+        after = ["zed-auth.service"] ++ databaseDependencies;
+
+        preStart = ''
+          mkdir -p "$RUNTIME_DIRECTORY/crates/collab"
+          ln -sf ${collabEnvironment} "$RUNTIME_DIRECTORY/crates/collab/.env.toml"
+          ln -sf "$CREDENTIALS_DIRECTORY/zed-auth.toml" \
+            "$RUNTIME_DIRECTORY/crates/collab/.env.secret.toml"
+        '';
+
+        serviceConfig =
+          hardening
+          // {
+            ExecStart = "${getExe cfg.collab.package} serve collab";
+            Group = cfg.group;
+            LoadCredential = "zed-auth.toml:${cfg.secretsFile}";
+            Restart = "on-failure";
+            RestartSec = 5;
+            RuntimeDirectory = "zed-collab";
+            RuntimeDirectoryMode = "0700";
+            User = cfg.user;
+            WorkingDirectory = "/run/zed-collab";
+          };
+      };
+
+      zed-collab-database-migrate = mkIf cfg.database.createLocally {
+        description = "Migrate the Zed collab database";
+        requires = ["postgresql.service"];
+        after = ["postgresql.service"];
+        before = ["zed-auth.service" "zed-collab.service"];
+
+        serviceConfig =
+          hardening
+          // {
+            ExecStart = "${getExe pkgs.sqlx-cli} migrate run --ignore-missing --source ${cfg.collab.package}/share/zed-collab/migrations --database-url postgres://%2Frun%2Fpostgresql/${cfg.database.name}";
+            Group = cfg.group;
+            RemainAfterExit = true;
+            Type = "oneshot";
+            User = cfg.user;
+          };
+      };
+    };
+  };
+
+  _class = "nixos";
+  _file = ./nixos.nix;
+}

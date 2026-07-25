@@ -5,12 +5,12 @@ use axum::{
     Router,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{any, get, patch, post},
+    routing::{get, patch, post},
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tower_http::trace::TraceLayer;
 
-use crate::{api, config::Config, proxy};
+use crate::{api, config::Config};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -30,7 +30,9 @@ impl App {
             .connect(&config.database_url)
             .await
             .context("failed to connect to Postgres")?;
-        sqlx::migrate!()
+        let mut migrator = sqlx::migrate!();
+        migrator.set_ignore_missing(true);
+        migrator
             .run(&database)
             .await
             .context("failed to run database migrations")?;
@@ -58,8 +60,6 @@ impl App {
                 "/native_app_signin_succeeded",
                 get(api::native_app_sign_in_succeeded),
             )
-            .route("/rpc", get(api::rpc_redirect))
-            .route("/actual_rpc", get(proxy::actual_rpc))
             .route("/client/users/me", get(api::authenticated_user))
             .route("/client/users/connect", get(api::users_connect))
             .route(
@@ -84,9 +84,6 @@ impl App {
                 "/internal/channel_members/fuzzy_search_by_github_login",
                 post(api::fuzzy_search_channel_members),
             )
-            .route("/extensions", any(proxy::extensions_proxy))
-            .route("/extensions/{*path}", any(proxy::extensions_proxy))
-            .fallback(proxy::fallback_proxy)
             .layer(TraceLayer::new_for_http())
             .with_state(state)
     }
@@ -98,8 +95,6 @@ impl App {
             .with_context(|| format!("failed to bind {bind_address}"))?;
         tracing::info!(
             %bind_address,
-            public_base_url = %self.state.config.public_base_url,
-            local_collab_url = %self.state.config.local_collab_url,
             "Zed auth facade listening"
         );
         axum::serve(listener, Self::router(self.state))
@@ -148,14 +143,6 @@ impl AppError {
             source: Some(source.into()),
         }
     }
-
-    pub fn internal_message(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            public_message: message.into(),
-            source: None,
-        }
-    }
 }
 
 impl IntoResponse for AppError {
@@ -201,50 +188,5 @@ async fn shutdown_signal() {
     tokio::select! {
         () = control_c => {}
         () = terminate => {}
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode, header},
-    };
-    use sqlx::postgres::PgPoolOptions;
-    use tower::ServiceExt as _;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn rpc_route_redirects_to_the_facade_proxy() {
-        let config = Config::test();
-        let database = PgPoolOptions::new()
-            .connect_lazy(&config.database_url)
-            .expect("valid test database URL");
-        let state = AppState {
-            config: Arc::new(config),
-            database,
-            http_client: reqwest::Client::new(),
-        };
-
-        let response = App::router(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/rpc")
-                    .body(Body::empty())
-                    .expect("valid request"),
-            )
-            .await
-            .expect("router should respond");
-
-        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
-        assert_eq!(
-            response.headers().get(header::LOCATION),
-            Some(
-                &"http://localhost:8787/actual_rpc"
-                    .parse()
-                    .expect("valid header")
-            )
-        );
     }
 }

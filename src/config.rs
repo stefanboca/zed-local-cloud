@@ -1,16 +1,22 @@
-use std::{collections::HashSet, env, net::SocketAddr, str::FromStr};
+use std::{
+    collections::HashSet,
+    env, fs,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use anyhow::{Context as _, ensure};
+use serde::Deserialize;
 use url::Url;
+
+const SYSTEMD_CREDENTIAL_NAME: &str = "zed-auth.toml";
 
 #[derive(Clone, Debug)]
 pub struct Config {
     pub bind_address: SocketAddr,
     pub database_url: String,
-    pub public_base_url: Url,
-    pub local_collab_url: Url,
     pub upstream_web_url: Url,
-    pub upstream_api_url: Url,
     pub upstream_cloud_url: Url,
     pub internal_api_key: String,
     pub admin_github_logins: HashSet<String>,
@@ -18,28 +24,19 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
+        let secrets = Secrets::load()?;
         let bind_address = parse("BIND_ADDRESS", env_or("BIND_ADDRESS", "127.0.0.1:8787"))?;
-        let public_base_url = parse_url(
-            "PUBLIC_BASE_URL",
-            &env_or("PUBLIC_BASE_URL", "http://localhost:8787"),
-        )?;
-        let local_collab_url = parse_url(
-            "LOCAL_COLLAB_URL",
-            &env_or("LOCAL_COLLAB_URL", "http://127.0.0.1:8080"),
-        )?;
         let upstream_web_url = parse_url(
             "UPSTREAM_WEB_URL",
             &env_or("UPSTREAM_WEB_URL", "https://zed.dev"),
-        )?;
-        let upstream_api_url = parse_url(
-            "UPSTREAM_API_URL",
-            &env_or("UPSTREAM_API_URL", "https://api.zed.dev"),
         )?;
         let upstream_cloud_url = parse_url(
             "UPSTREAM_CLOUD_URL",
             &env_or("UPSTREAM_CLOUD_URL", "https://cloud.zed.dev"),
         )?;
-        let internal_api_key = env_or("ZED_CLOUD_INTERNAL_API_KEY", "internal-api-key-secret");
+        let internal_api_key = secrets
+            .internal_api_key
+            .unwrap_or_else(|| env_or("ZED_CLOUD_INTERNAL_API_KEY", "internal-api-key-secret"));
         ensure!(
             !internal_api_key.trim().is_empty(),
             "ZED_CLOUD_INTERNAL_API_KEY must not be empty"
@@ -55,11 +52,10 @@ impl Config {
 
         Ok(Self {
             bind_address,
-            database_url: env_or("DATABASE_URL", "postgres://%2Frun%2Fpostgresql/zed"),
-            public_base_url,
-            local_collab_url,
+            database_url: secrets
+                .database_url
+                .unwrap_or_else(|| env_or("DATABASE_URL", "postgres://%2Frun%2Fpostgresql/zed")),
             upstream_web_url,
-            upstream_api_url,
             upstream_cloud_url,
             internal_api_key,
             admin_github_logins,
@@ -71,23 +67,49 @@ impl Config {
             .contains(&github_login.to_lowercase())
     }
 
-    pub fn public_url(&self, path: &str) -> Url {
-        url_with_path(&self.public_base_url, path, None)
-    }
-
     #[cfg(test)]
     pub fn test() -> Self {
         Self {
             bind_address: "127.0.0.1:8787".parse().expect("valid test address"),
             database_url: "postgres://localhost/zed".to_owned(),
-            public_base_url: Url::parse("http://localhost:8787").expect("valid test URL"),
-            local_collab_url: Url::parse("http://localhost:8080").expect("valid test URL"),
             upstream_web_url: Url::parse("https://zed.dev").expect("valid test URL"),
-            upstream_api_url: Url::parse("https://api.zed.dev").expect("valid test URL"),
             upstream_cloud_url: Url::parse("https://cloud.zed.dev").expect("valid test URL"),
             internal_api_key: "test-internal-api-key".to_owned(),
             admin_github_logins: HashSet::new(),
         }
+    }
+}
+
+#[derive(Default, Deserialize)]
+struct Secrets {
+    #[serde(alias = "DATABASE_URL")]
+    database_url: Option<String>,
+    #[serde(alias = "ZED_CLOUD_INTERNAL_API_KEY")]
+    internal_api_key: Option<String>,
+}
+
+impl Secrets {
+    fn load() -> anyhow::Result<Self> {
+        if let Some(path) = env::var_os("ZED_AUTH_SECRETS_FILE") {
+            return Self::read(Path::new(&path));
+        }
+
+        let Some(credentials_directory) = env::var_os("CREDENTIALS_DIRECTORY") else {
+            return Ok(Self::default());
+        };
+        let path = PathBuf::from(credentials_directory).join(SYSTEMD_CREDENTIAL_NAME);
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+
+        Self::read(&path)
+    }
+
+    fn read(path: &Path) -> anyhow::Result<Self> {
+        let contents = fs::read_to_string(path)
+            .with_context(|| format!("failed to read secrets file {}", path.display()))?;
+        toml::from_str(&contents)
+            .with_context(|| format!("failed to parse secrets file {}", path.display()))
     }
 }
 
@@ -125,6 +147,23 @@ fn parse_url(name: &str, value: &str) -> anyhow::Result<Url> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_toml_secrets() {
+        let secrets: Secrets = toml::from_str(
+            r#"
+                DATABASE_URL = "postgres://localhost/zed"
+                ZED_CLOUD_INTERNAL_API_KEY = "secret"
+            "#,
+        )
+        .expect("valid secrets");
+
+        assert_eq!(
+            secrets.database_url.as_deref(),
+            Some("postgres://localhost/zed")
+        );
+        assert_eq!(secrets.internal_api_key.as_deref(), Some("secret"));
+    }
 
     #[test]
     fn replacing_a_url_path_does_not_keep_the_base_path() {

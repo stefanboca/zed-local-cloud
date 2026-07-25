@@ -102,10 +102,6 @@ pub async fn native_app_sign_in_succeeded() -> Html<&'static str> {
     )
 }
 
-pub async fn rpc_redirect(State(state): State<AppState>) -> Redirect {
-    Redirect::temporary(state.config.public_url("/actual_rpc").as_str())
-}
-
 pub async fn authenticated_user(
     State(state): State<AppState>,
     headers: HeaderMap,

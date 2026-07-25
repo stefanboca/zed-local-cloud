@@ -6,7 +6,6 @@ use crate::{app::App, config::Config};
 mod api;
 mod app;
 mod config;
-mod proxy;
 mod store;
 
 #[tokio::main]
