@@ -7,31 +7,27 @@
   nixos-basic = pkgs.testers.runNixOSTest {
     name = "zed-auth-basic";
 
-    nodes.machine = {pkgs, ...}: let
-      secrets = pkgs.writeText "zed-auth-test.toml" ''
-        DATABASE_URL = "postgres://zed@%2Frun%2Fpostgresql/zed"
-        ZED_CLOUD_INTERNAL_API_KEY = "zed-auth-test-internal-api-key"
-      '';
-    in {
+    nodes.machine = {
       imports = [module];
 
       services.zed-auth = {
         enable = true;
         package = zedAuthPackage;
         virtualHost = "http://localhost";
-        secretsFile = toString secrets;
         collab.package = zedCollabPackage;
       };
     };
 
     testScript = ''
+      import base64
       import json
+      import tomllib
 
       start_all()
 
       for unit in [
           "postgresql.target",
-          "zed-collab-database-migrate.service",
+          "zed-setup.service",
           "zed-auth.service",
           "zed-collab.service",
           "caddy.service",
@@ -46,7 +42,7 @@
       assert failed_units.strip() == "", failed_units
 
       for unit in [
-          "zed-collab-database-migrate.service",
+          "zed-setup.service",
           "zed-auth.service",
           "zed-collab.service",
       ]:
@@ -54,6 +50,54 @@
               f"systemctl show {unit} --property=User --value"
           ).strip()
           assert user == "zed", f"{unit} runs as {user!r}"
+
+          state_directory = machine.succeed(
+              f"systemctl show {unit} --property=StateDirectory --value"
+          ).strip()
+          assert state_directory == "zed", (
+              f"{unit} uses state directory {state_directory!r}"
+          )
+
+      assert machine.succeed(
+          "stat --format='%U:%G %a' /var/lib/zed"
+      ).strip() == "zed:zed 700"
+      assert machine.succeed(
+          "stat --format='%U:%G %a' /var/lib/zed/zed-auth.toml"
+      ).strip() == "zed:zed 600"
+
+      secret_toml = machine.succeed("cat /var/lib/zed/zed-auth.toml")
+      secret = tomllib.loads(secret_toml)
+      assert set(secret) == {"ZED_CLOUD_INTERNAL_API_KEY"}, secret
+      key = secret["ZED_CLOUD_INTERNAL_API_KEY"]
+      assert len(base64.b64decode(key, validate=True)) == 128
+
+      auth_environment = machine.succeed(
+          "systemctl show zed-auth.service --property=Environment --value"
+      )
+      assert (
+          "DATABASE_URL=postgres://zed@%2Frun%2Fpostgresql/zed"
+          in auth_environment
+      )
+      assert (
+          "ZED_AUTH_SECRETS_FILE=/var/lib/zed/zed-auth.toml"
+          in auth_environment
+      )
+
+      collab_environment = tomllib.loads(
+          machine.succeed("cat /run/zed-collab/crates/collab/.env.toml")
+      )
+      assert (
+          collab_environment["DATABASE_URL"]
+          == "postgres://zed@%2Frun%2Fpostgresql/zed"
+      )
+      assert machine.succeed(
+          "readlink /run/zed-collab/crates/collab/.env.secret.toml"
+      ).strip() == "/var/lib/zed/zed-auth.toml"
+
+      machine.succeed("systemctl restart zed-setup.service")
+      assert machine.succeed(
+          "cat /var/lib/zed/zed-auth.toml"
+      ) == secret_toml
 
       migrations = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
