@@ -42,9 +42,8 @@
     });
 
     apps = forAllSystems (system: let
-      pkgs = nixpkgsFor.${system};
       vm = import ./vm.nix {
-        inherit lib nixpkgs pkgs system;
+        inherit lib nixpkgs system;
         module = self.nixosModules.default;
         overlay = self.overlays.default;
       };
