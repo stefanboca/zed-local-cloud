@@ -22,11 +22,7 @@
     ZED_ENVIRONMENT = "development";
   };
 
-  setupService = "zed-setup.service";
-  setupDependencies = [setupService];
   postgresqlDependencies = optional cfg.database.createLocally "postgresql.target";
-  stateDirectory = "zed";
-  stateFile = "/var/lib/${stateDirectory}/zed-auth.toml";
 
   hardening = {
     LockPersonality = true;
@@ -251,17 +247,17 @@ in {
       zed-auth = {
         description = "Zed local authentication facade";
         wantedBy = ["multi-user.target"];
-        requires = setupDependencies;
-        after = setupDependencies;
+        requires = ["zed-setup.service"];
+        after = ["zed-setup.service"];
 
         environment = {
           BIND_ADDRESS = "${cfg.host}:${toString cfg.port}";
-          DATABASE_URL = cfg.database.url;
+          DATABASE_URL = lib.replaceStrings ["%"] ["%%"] cfg.database.url;
           LOCAL_ADMIN_GITHUB_LOGINS = lib.concatStringsSep "," cfg.adminGithubLogins;
           RUST_LOG = cfg.logLevel;
           UPSTREAM_CLOUD_URL = cfg.upstreamCloudUrl;
           UPSTREAM_WEB_URL = cfg.upstreamWebUrl;
-          ZED_AUTH_SECRETS_FILE = stateFile;
+          ZED_AUTH_SECRETS_FILE = "%S/zed/zed-auth.toml";
         };
 
         serviceConfig =
@@ -271,7 +267,7 @@ in {
             Group = cfg.group;
             Restart = "on-failure";
             RestartSec = 5;
-            StateDirectory = stateDirectory;
+            StateDirectory = "zed";
             StateDirectoryMode = "0700";
             User = cfg.user;
           };
@@ -280,13 +276,13 @@ in {
       zed-collab = {
         description = "Zed collaboration server";
         wantedBy = ["multi-user.target"];
-        requires = ["zed-auth.service"] ++ setupDependencies;
-        after = ["zed-auth.service"] ++ setupDependencies;
+        requires = ["zed-auth.service" "zed-setup.service"];
+        after = ["zed-auth.service" "zed-setup.service"];
 
         preStart = ''
           mkdir -p "$RUNTIME_DIRECTORY/crates/collab"
           ln -sf ${collabEnvironment} "$RUNTIME_DIRECTORY/crates/collab/.env.toml"
-          ln -sf ${stateFile} \
+          ln -sf "$STATE_DIRECTORY/zed-auth.toml" \
             "$RUNTIME_DIRECTORY/crates/collab/.env.secret.toml"
         '';
 
@@ -299,10 +295,10 @@ in {
             RestartSec = 5;
             RuntimeDirectory = "zed-collab";
             RuntimeDirectoryMode = "0700";
-            StateDirectory = stateDirectory;
+            StateDirectory = "zed";
             StateDirectoryMode = "0700";
             User = cfg.user;
-            WorkingDirectory = "/run/zed-collab";
+            WorkingDirectory = "%t/zed-collab";
           };
       };
 
@@ -312,7 +308,7 @@ in {
         after = postgresqlDependencies;
         before = ["zed-auth.service" "zed-collab.service"];
 
-        environment.DATABASE_URL = cfg.database.url;
+        environment.DATABASE_URL = lib.replaceStrings ["%"] ["%%"] cfg.database.url;
 
         script = ''
           secret_file="$STATE_DIRECTORY/zed-auth.toml"
@@ -339,7 +335,7 @@ in {
           // {
             Group = cfg.group;
             RemainAfterExit = true;
-            StateDirectory = stateDirectory;
+            StateDirectory = "zed";
             StateDirectoryMode = "0700";
             Type = "oneshot";
             User = cfg.user;
