@@ -13,6 +13,7 @@
   cfg = config.services.zed-auth;
 
   collabEnvironment = (pkgs.formats.toml {}).generate "zed-collab.toml" {
+    DATABASE_URL = cfg.database.url;
     DATABASE_MAX_CONNECTIONS = cfg.collab.databaseMaxConnections;
     HTTP_PORT = cfg.collab.port;
     LOG_JSON = cfg.collab.logJson;
@@ -21,8 +22,11 @@
     ZED_ENVIRONMENT = "development";
   };
 
-  databaseMigrationService = "zed-collab-database-migrate.service";
-  databaseDependencies = optional cfg.database.createLocally databaseMigrationService;
+  setupService = "zed-setup.service";
+  setupDependencies = [setupService];
+  postgresqlDependencies = optional cfg.database.createLocally "postgresql.target";
+  stateDirectory = "zed";
+  stateFile = "/var/lib/${stateDirectory}/zed-auth.toml";
 
   hardening = {
     LockPersonality = true;
@@ -110,18 +114,6 @@ in {
       description = "Tracing filter used by the facade.";
     };
 
-    secretsFile = mkOption {
-      type = str;
-      example = "/run/secrets/zed-auth.toml";
-      description = ''
-        Runtime path to a TOML file containing DATABASE_URL and
-        ZED_CLOUD_INTERNAL_API_KEY. systemd exposes the same file to both
-        services as a credential. Use an absolute string path from a secret
-        provisioner rather than a Nix path, which would copy the source file
-        into the Nix store.
-      '';
-    };
-
     collab = {
       package = mkPackageOption pkgs "zed-collab" {};
 
@@ -167,6 +159,12 @@ in {
         type = str;
         default = "zed";
         description = "Name of the shared collab database.";
+      };
+
+      url = mkOption {
+        type = str;
+        default = "postgres://${cfg.user}@%2Frun%2Fpostgresql/${cfg.database.name}";
+        description = "PostgreSQL URL shared by collab and the authentication facade.";
       };
     };
   };
@@ -253,15 +251,17 @@ in {
       zed-auth = {
         description = "Zed local authentication facade";
         wantedBy = ["multi-user.target"];
-        requires = databaseDependencies;
-        after = databaseDependencies;
+        requires = setupDependencies;
+        after = setupDependencies;
 
         environment = {
           BIND_ADDRESS = "${cfg.host}:${toString cfg.port}";
+          DATABASE_URL = cfg.database.url;
           LOCAL_ADMIN_GITHUB_LOGINS = lib.concatStringsSep "," cfg.adminGithubLogins;
           RUST_LOG = cfg.logLevel;
           UPSTREAM_CLOUD_URL = cfg.upstreamCloudUrl;
           UPSTREAM_WEB_URL = cfg.upstreamWebUrl;
+          ZED_AUTH_SECRETS_FILE = stateFile;
         };
 
         serviceConfig =
@@ -269,9 +269,10 @@ in {
           // {
             ExecStart = getExe cfg.package;
             Group = cfg.group;
-            LoadCredential = "zed-auth.toml:${cfg.secretsFile}";
             Restart = "on-failure";
             RestartSec = 5;
+            StateDirectory = stateDirectory;
+            StateDirectoryMode = "0700";
             User = cfg.user;
           };
       };
@@ -279,13 +280,13 @@ in {
       zed-collab = {
         description = "Zed collaboration server";
         wantedBy = ["multi-user.target"];
-        requires = ["zed-auth.service"] ++ databaseDependencies;
-        after = ["zed-auth.service"] ++ databaseDependencies;
+        requires = ["zed-auth.service"] ++ setupDependencies;
+        after = ["zed-auth.service"] ++ setupDependencies;
 
         preStart = ''
           mkdir -p "$RUNTIME_DIRECTORY/crates/collab"
           ln -sf ${collabEnvironment} "$RUNTIME_DIRECTORY/crates/collab/.env.toml"
-          ln -sf "$CREDENTIALS_DIRECTORY/zed-auth.toml" \
+          ln -sf ${stateFile} \
             "$RUNTIME_DIRECTORY/crates/collab/.env.secret.toml"
         '';
 
@@ -294,28 +295,52 @@ in {
           // {
             ExecStart = "${getExe cfg.collab.package} serve collab";
             Group = cfg.group;
-            LoadCredential = "zed-auth.toml:${cfg.secretsFile}";
             Restart = "on-failure";
             RestartSec = 5;
             RuntimeDirectory = "zed-collab";
             RuntimeDirectoryMode = "0700";
+            StateDirectory = stateDirectory;
+            StateDirectoryMode = "0700";
             User = cfg.user;
             WorkingDirectory = "/run/zed-collab";
           };
       };
 
-      zed-collab-database-migrate = mkIf cfg.database.createLocally {
-        description = "Migrate the Zed collab database";
-        requires = ["postgresql.target"];
-        after = ["postgresql.target"];
+      zed-setup = {
+        description = "Initialize the local Zed services";
+        requires = postgresqlDependencies;
+        after = postgresqlDependencies;
         before = ["zed-auth.service" "zed-collab.service"];
+
+        environment.DATABASE_URL = cfg.database.url;
+
+        script = ''
+          secret_file="$STATE_DIRECTORY/zed-auth.toml"
+          (
+            set -euo pipefail
+            umask 0077
+            if [ ! -s "$secret_file" ]; then
+              key="$(
+                ${getExe pkgs.openssl} rand -base64 128 \
+                  | ${lib.getExe' pkgs.coreutils "tr"} -d '\n'
+              )"
+              printf 'ZED_CLOUD_INTERNAL_API_KEY = "%s"\n' "$key" >"$secret_file"
+            fi
+          )
+
+          ${getExe pkgs.sqlx-cli} migrate run \
+            --ignore-missing \
+            --source ${cfg.collab.package}/share/zed-collab/migrations \
+            --database-url "$DATABASE_URL"
+        '';
 
         serviceConfig =
           hardening
           // {
-            ExecStart = "${getExe pkgs.sqlx-cli} migrate run --ignore-missing --source ${cfg.collab.package}/share/zed-collab/migrations --database-url postgres://${cfg.user}@%%2Frun%%2Fpostgresql/${cfg.database.name}";
             Group = cfg.group;
             RemainAfterExit = true;
+            StateDirectory = stateDirectory;
+            StateDirectoryMode = "0700";
             Type = "oneshot";
             User = cfg.user;
           };
