@@ -146,22 +146,23 @@ url = mkOption {
 ```
 
 Add `DATABASE_URL = cfg.database.url;` to `collabEnvironment` and the
-`zed-auth.environment` attribute set.
+percent-escaped database URL to the `zed-auth.environment` attribute set:
+
+```nix
+DATABASE_URL = lib.replaceStrings ["%"] ["%%"] cfg.database.url;
+```
 
 - [ ] **Step 2: Replace migration-only dependency wiring with setup wiring**
 
 Replace the existing migration dependency locals with:
 
 ```nix
-setupService = "zed-setup.service";
-setupDependencies = [setupService];
 postgresqlDependencies = optional cfg.database.createLocally "postgresql.target";
-stateDirectory = "zed";
-stateFile = "/var/lib/${stateDirectory}/zed-auth.toml";
 ```
 
-Make both long-running units require and start after `setupDependencies`.
-Keep collab's existing requirement on `zed-auth.service`.
+Make both long-running units require and start after the inline
+`"zed-setup.service"` value. Keep collab's existing requirement on
+`zed-auth.service`.
 
 - [ ] **Step 3: Implement the setup unit**
 
@@ -191,22 +192,30 @@ script = ''
 '';
 ```
 
-Set `environment.DATABASE_URL = cfg.database.url`. Retain the oneshot,
-hardening, configured user/group, and `RemainAfterExit`, and add:
+Set the systemd-escaped database URL:
 
 ```nix
-StateDirectory = stateDirectory;
+environment.DATABASE_URL =
+  lib.replaceStrings ["%"] ["%%"] cfg.database.url;
+```
+
+Retain the oneshot, hardening, configured user/group, and `RemainAfterExit`,
+and add:
+
+```nix
+StateDirectory = "zed";
 StateDirectoryMode = "0700";
 ```
 
 - [ ] **Step 4: Make auth and collab consume the shared state**
 
 For `zed-auth`, remove `LoadCredential`, add
-`ZED_AUTH_SECRETS_FILE = stateFile` to its environment, and add the shared
-`StateDirectory` settings.
+`ZED_AUTH_SECRETS_FILE = "%S/zed/zed-auth.toml"` to its environment, and add
+the shared `StateDirectory` settings.
 
-For `zed-collab`, replace its `.env.secret.toml` link target with `stateFile`,
-remove `LoadCredential`, and add the shared `StateDirectory` settings.
+For `zed-collab`, link `.env.secret.toml` from
+`"$STATE_DIRECTORY/zed-auth.toml"`, remove `LoadCredential`, add the shared
+`StateDirectory` settings, and use `WorkingDirectory = "%t/zed-collab"`.
 
 - [ ] **Step 5: Format and run the NixOS test to verify GREEN**
 

@@ -35,6 +35,10 @@ The setup, auth, and collab units all run as the configured system user/group
 and declare `StateDirectory = "zed"` with mode `0700`. The generated TOML file
 is created with mode `0600`.
 
+Unit settings refer to the state root with systemd's `%S` specifier, while
+shell scripts use the corresponding `$STATE_DIRECTORY` environment variable.
+Collab's working directory uses `%t/zed-collab`.
+
 When local database management is enabled, `zed-setup` requires and starts
 after `postgresql.target`. With an external database, the setup unit still
 generates the key and attempts migrations but has no PostgreSQL unit
@@ -47,6 +51,10 @@ The database URL is passed directly to:
 - `zed-setup` for `sqlx migrate`;
 - `zed-auth` through `DATABASE_URL` in its service environment; and
 - `zed-collab` through its non-secret `.env.toml`.
+
+Percent signs in the two systemd environment assignments are doubled while
+rendering the units so URL-encoded socket paths survive systemd specifier
+expansion. The module option and collab TOML retain the ordinary URL.
 
 Both long-running services read the generated file directly from the shared
 state directory. The facade receives

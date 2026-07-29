@@ -114,7 +114,6 @@ NixOS configuration:
             enable = true;
             virtualHost = "zed.example.com";
             adminGithubLogins = ["your-github-login"];
-            secretsFile = "/run/secrets/zed-auth.toml";
           };
           services.caddy.openFirewall = true;
         }
@@ -131,9 +130,8 @@ $ nix run .#vm
 ```
 
 The VM forwards host `127.0.0.1:18787` to guest Caddy. Set Zed's
-`server_url` to `http://localhost:18787`. The VM uses a fixed throwaway
-internal API key from the Nix store for testing; deployments should continue
-to supply `services.zed-auth.secretsFile` from a runtime secret provisioner.
+`server_url` to `http://localhost:18787`. The VM uses the module's normal
+generated internal API key in its ephemeral state directory.
 
 Run the NixOS integration test with:
 
@@ -142,26 +140,24 @@ $ nix build .#checks.x86_64-linux.nixos-basic
 ```
 
 The test is defined in `tests/nixos/default.nix`. It boots a clean VM and
-checks database initialization, migration ordering, service users and health,
-Caddy routing, and the upstream sign-in completion redirect.
+checks database initialization, generated-key permissions and persistence,
+migration ordering, service users and health, Caddy routing, and the upstream
+sign-in completion redirect.
 
 The module creates a local PostgreSQL database owned by the configured system
-user, applies the schema shipped with the packaged collab server using
-`sqlx migrate`, and starts both collab and the facade. The facade applies its
-own embedded migrations before binding its listener. The TOML file is loaded
-into both units through systemd's credential
-mechanism and should contain the shared database URL and internal API key using
-the uppercase keys expected by upstream collab:
+user and starts `zed-setup` before collab and the facade. All three units share
+the mode-`0700` `zed` systemd state directory and run as the configured system
+user/group. On its first run, `zed-setup` generates a 128-byte base64 internal
+API key with OpenSSL in `/var/lib/zed/zed-auth.toml`; later runs preserve the
+non-empty mode-`0600` file. It then applies the schema shipped with the
+packaged collab server using `sqlx migrate`. Collab and the facade read the
+same generated key directly from the shared state directory. The facade
+applies its own embedded migrations before binding its listener.
 
-```toml
-DATABASE_URL = "postgres://zed@%2Frun%2Fpostgresql/zed"
-ZED_CLOUD_INTERNAL_API_KEY = "your-local-secret"
-```
-
-Use an absolute string path supplied by your secret provisioner. Do not use a
-Nix path such as `./zed-auth.toml`, which would copy the secret into the Nix
-store. systemd makes the file available only to the service as the
-`zed-auth.toml` credential.
+The database URL is not secret. Configure it with
+`services.zed-auth.database.url`; it defaults to the peer-authenticated local
+socket URL `postgres://zed@%2Frun%2Fpostgresql/zed`. The module passes it to
+setup, collab, and the facade as ordinary configuration.
 
 SQLx records the collab schema migration in the shared database and skips it
 after the first successful run. Collab and the facade use distinct migration
@@ -171,11 +167,11 @@ management is enabled,
 `services.zed-auth.database.name` must match `services.zed-auth.user` so
 PostgreSQL can grant ownership and use peer authentication without a password;
 both default to `zed`. Set `services.zed-auth.database.createLocally = false`
-when using an externally managed database. All three units—the migration,
-collab, and the facade—run as the configured system user/group. The facade
-listens only on loopback. The module enables Caddy and configures the complete
-public reverse proxy; configure `services.caddy.openFirewall` as usual if Caddy
-should open ports 80 and 443.
+when using an externally managed database; `zed-setup` still runs migrations
+against `services.zed-auth.database.url`. The facade listens only on loopback.
+The module enables Caddy and configures the complete public reverse proxy;
+configure `services.caddy.openFirewall` as usual if Caddy should open ports 80
+and 443.
 
 The upstream collab migration is currently a full schema snapshot whose
 numeric SQLx version has remained unchanged across Zed releases. If upstream
@@ -254,15 +250,20 @@ or removed migration set.
 
 ## Internal API key
 
-`ZED_CLOUD_INTERNAL_API_KEY` is an arbitrary shared local secret chosen by the
-operator. Configure the same value for collab and the facade:
+`ZED_CLOUD_INTERNAL_API_KEY` is an arbitrary shared local secret. The NixOS
+module generates it automatically in `/var/lib/zed/zed-auth.toml` and provides
+the same value to collab and the facade. It is not issued by upstream Zed and
+is never sent there.
+
+For a standalone non-NixOS deployment, configure the same value for both
+processes:
 
 ```sh
 ZED_CLOUD_INTERNAL_API_KEY=your-local-secret
 ```
 
-It is not issued by upstream Zed and is never sent there. Collab uses it as a
-Bearer token when calling these locally implemented endpoints:
+Collab uses it as a Bearer token when calling these locally implemented
+endpoints:
 
 - `POST /internal/users/look_up_by_legacy_id`
 - `POST /internal/users/look_up_by_github_login`
@@ -308,7 +309,7 @@ The module's Caddy virtual host uses named matchers to route:
 | `ZED_CLOUD_INTERNAL_API_KEY` | `internal-api-key-secret` | Shared local internal API secret |
 | `LOCAL_ADMIN_GITHUB_LOGINS` | empty | Comma-separated local collab administrators |
 | `RUST_LOG` | `zed_auth=info,tower_http=info,sqlx=warn` | Tracing filter |
-| `ZED_AUTH_SECRETS_FILE` | systemd `zed-auth.toml` credential, if present | TOML secrets file for non-systemd use |
+| `ZED_AUTH_SECRETS_FILE` | unset | TOML secrets file for standalone deployments |
 
 ## Validation status
 
@@ -320,8 +321,8 @@ The module's Caddy virtual host uses named matchers to route:
 - The opt-in auth/database integration test passes against Postgres initialized
   with Zed's actual collab schema.
 - Both SQLx migrations apply to that schema.
-- Runtime health, authentication rejection, and native sign-in redirect checks
-  pass.
+- Runtime key generation and persistence, service health, authentication
+  rejection, and native sign-in redirect checks pass.
 - The Zed reference worktree remains unchanged.
 
 The remaining manual acceptance work is a two-user collaboration check:
