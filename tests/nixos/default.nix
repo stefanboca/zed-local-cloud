@@ -137,6 +137,14 @@
       assert rpc_location_with_port == "http://localhost:18787/actual_rpc"
       assert response("/actual_rpc") == "401"
       assert response("/client/users/me") == "401"
+      assert machine.succeed(
+          "curl --silent --show-error --output /dev/null "
+          "--request POST "
+          "--header='Content-Type: application/json' "
+          "--data='{\"channel_id\":1,\"query\":\"local\",\"limit\":10}' "
+          "--write-out='%{http_code}' "
+          "http://localhost/internal/channel_members/fuzzy_search"
+      ).strip() == "401"
       assert response("/models") == "200"
       models = machine.succeed(
           "curl --silent --show-error http://localhost/models"

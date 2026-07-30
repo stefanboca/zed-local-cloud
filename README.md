@@ -15,8 +15,8 @@ Zed.
 ## Zed compatibility baseline
 
 The current packaged compatibility baseline is
-[zed-industries/zed@952d712dac48a4af2c54fb22c82d82a9d69b72d4](https://github.com/zed-industries/zed/commit/952d712dac48a4af2c54fb22c82d82a9d69b72d4),
-the `v1.11.3` tag from July 15, 2026.
+[zed-industries/zed@f96212f2c50f54d93712fa130d6226b1ce7d76b5](https://github.com/zed-industries/zed/commit/f96212f2c50f54d93712fa130d6226b1ce7d76b5),
+the `v1.12.0` tag from July 22, 2026.
 
 That revision is the reference baseline for:
 
@@ -25,6 +25,11 @@ That revision is the reference baseline for:
 - collab's internal user API request and response types
 - RPC and Cloud WebSocket headers
 - collab's Postgres schema
+
+Compared with the previous `v1.11.3` baseline, the collab schema migration is
+byte-for-byte unchanged. Zed `v1.12.0` renamed the channel-member search route
+to `/internal/channel_members/fuzzy_search`; the facade implements that current
+route.
 
 Recheck these contracts when updating to a newer Zed revision.
 
@@ -268,7 +273,7 @@ endpoints:
 - `POST /internal/users/look_up_by_legacy_id`
 - `POST /internal/users/look_up_by_github_login`
 - `POST /internal/users/fuzzy_search`
-- `POST /internal/channel_members/fuzzy_search_by_github_login`
+- `POST /internal/channel_members/fuzzy_search`
 
 Only users who have authenticated through this facade appear in local lookup
 and search results.

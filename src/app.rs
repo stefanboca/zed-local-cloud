@@ -77,7 +77,7 @@ impl App {
                 post(api::fuzzy_search_users),
             )
             .route(
-                "/internal/channel_members/fuzzy_search_by_github_login",
+                "/internal/channel_members/fuzzy_search",
                 post(api::fuzzy_search_channel_members),
             )
             .layer(TraceLayer::new_for_http())

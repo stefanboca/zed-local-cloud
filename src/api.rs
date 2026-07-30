@@ -554,6 +554,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exposes_current_channel_member_search_endpoint() {
+        let state = AppState {
+            config: Arc::new(Config::test()),
+            database: PgPoolOptions::new()
+                .connect_lazy("postgres://localhost/zed")
+                .expect("test database URL should parse"),
+            http_client: reqwest::Client::new(),
+        };
+        let response = App::router(state)
+            .oneshot(
+                Request::post("/internal/channel_members/fuzzy_search")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"channel_id":1,"query":"local","limit":10}"#))
+                    .expect("valid request"),
+            )
+            .await
+            .expect("facade should respond");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL pointing to a disposable collab-schema database"]
     async fn validates_upstream_credentials_and_synchronizes_the_local_user() {
         let database_url =
