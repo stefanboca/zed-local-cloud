@@ -6,11 +6,12 @@ synchronizes authenticated users into collab's Postgres database, implements
 collab's internal user APIs locally, and leaves generic reverse proxying to
 Caddy.
 
-The facade listens internally on `http://localhost:8787` by default. That is
-also the Cloud URL used by an unmodified development-mode collab server. Caddy
-provides the public HTTPS endpoint and routes RPC, extension, Cloud, and web
-traffic to the appropriate backend. Browser sign-in is delegated to upstream
-Zed.
+The facade listens internally on `http://localhost:8787` by default. The
+packaged collab server runs with `ZED_ENVIRONMENT=production`, with a small
+packaging patch that permits its Cloud URL to point at this local facade.
+Caddy provides the public HTTPS endpoint and routes RPC, extension, Cloud, and
+web traffic to the appropriate backend. Browser sign-in is delegated to
+upstream Zed.
 
 ## Zed compatibility baseline
 
@@ -29,7 +30,9 @@ That revision is the reference baseline for:
 Compared with the previous `v1.11.3` baseline, the collab schema migration is
 byte-for-byte unchanged. Zed `v1.12.0` renamed the channel-member search route
 to `/internal/channel_members/fuzzy_search`; the facade implements that current
-route.
+route. The packaged collab carries a minimal `ZED_CLOUD_URL` configuration
+patch so production-mode collab can use the local facade instead of upstream
+Cloud for credential validation and internal user APIs.
 
 Recheck these contracts when updating to a newer Zed revision.
 
@@ -152,12 +155,14 @@ sign-in completion redirect.
 The module creates a local PostgreSQL database owned by the configured system
 user and starts `zed-setup` before collab and the facade. All three units share
 the mode-`0700` `zed` systemd state directory and run as the configured system
-user/group. On its first run, `zed-setup` generates a 128-byte base64 internal
-API key with OpenSSL in `/var/lib/zed/zed-auth.toml`; later runs preserve the
-non-empty mode-`0600` file. It then applies the schema shipped with the
-packaged collab server using `sqlx migrate`. Collab and the facade read the
-same generated key directly from the shared state directory. The facade
-applies its own embedded migrations before binding its listener.
+user/group. Collab records itself as a production server while using the
+facade's private listen URL for Cloud authentication and internal APIs. On its
+first run, `zed-setup` generates a 128-byte base64 internal API key with
+OpenSSL in `/var/lib/zed/zed-auth.toml`; later runs preserve the non-empty
+mode-`0600` file. It then applies the schema shipped with the packaged collab
+server using `sqlx migrate`. Collab and the facade read the same generated key
+directly from the shared state directory. The facade applies its own embedded
+migrations before binding its listener.
 
 The database URL is not secret. Configure it with
 `services.zed-auth.database.url`; it defaults to the peer-authenticated local

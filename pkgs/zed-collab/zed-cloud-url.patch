@@ -1,0 +1,26 @@
+diff --git a/crates/collab/src/lib.rs b/crates/collab/src/lib.rs
+--- a/crates/collab/src/lib.rs
++++ b/crates/collab/src/lib.rs
+@@ -137,6 +137,7 @@ pub struct Config {
+     pub kinesis_access_key: Option<String>,
+     pub kinesis_secret_key: Option<String>,
+     pub zed_environment: Arc<str>,
++    pub zed_cloud_url: Option<String>,
+     pub zed_cloud_internal_api_key: String,
+     pub zed_client_checksum_seed: Option<String>,
+ }
+@@ -158,6 +159,10 @@ impl Config {
+     /// Returns the base Zed Cloud URL.
+     pub fn zed_cloud_url(&self) -> &str {
++        if let Some(url) = &self.zed_cloud_url {
++            return url;
++        }
++
+         match self.zed_environment.as_ref() {
+             "development" => "http://localhost:8787",
+             _ => "https://cloud.zed.dev",
+         }
+@@ -177,2 +182,3 @@ impl Config {
+             zed_environment: "test".into(),
++            zed_cloud_url: None,
+             zed_cloud_internal_api_key: "test-internal-api-key".into(),

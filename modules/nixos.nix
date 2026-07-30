@@ -19,7 +19,8 @@
     LOG_JSON = cfg.collab.logJson;
     RUST_LOG = cfg.collab.logLevel;
     ZED_CLIENT_CHECKSUM_SEED = cfg.collab.clientChecksumSeed;
-    ZED_ENVIRONMENT = "development";
+    ZED_CLOUD_URL = "http://${cfg.host}:${toString cfg.port}";
+    ZED_ENVIRONMENT = "production";
   };
 
   postgresqlDependencies = optional cfg.database.createLocally "postgresql.target";
@@ -167,13 +168,6 @@ in {
 
   config = mkIf cfg.enable {
     assertions = [
-      {
-        assertion = cfg.port == 8787;
-        message = ''
-          services.zed-auth.port must be 8787 because development-mode collab
-          uses http://localhost:8787 as its Cloud API URL.
-        '';
-      }
       {
         assertion = cfg.collab.databaseMaxConnections > 0;
         message = "services.zed-auth.collab.databaseMaxConnections must be positive.";

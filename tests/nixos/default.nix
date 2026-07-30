@@ -90,6 +90,8 @@
           collab_environment["DATABASE_URL"]
           == "postgres://zed@%2Frun%2Fpostgresql/zed"
       )
+      assert collab_environment["ZED_CLOUD_URL"] == "http://127.0.0.1:8787"
+      assert collab_environment["ZED_ENVIRONMENT"] == "production"
       assert machine.succeed(
           "readlink /run/zed-collab/crates/collab/.env.secret.toml"
       ).strip() == "/var/lib/zed/zed-auth.toml"
@@ -104,6 +106,12 @@
           "--command='SELECT version FROM _sqlx_migrations ORDER BY version'"
       ).splitlines()
       assert migrations == ["20251208000000", "20260724000000"], migrations
+
+      environments = machine.succeed(
+          "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
+          "--command='SELECT DISTINCT environment FROM servers'"
+      ).splitlines()
+      assert environments == ["production"], environments
 
       machine.succeed(
           "runuser -u zed -- psql --dbname=zed --set=ON_ERROR_STOP=1 "

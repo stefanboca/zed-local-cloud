@@ -14,6 +14,8 @@ rustPlatform.buildRustPackage {
 
   inherit (zed-editor) cargoDeps;
 
+  patches = [./zed-cloud-url.patch];
+
   postPatch = ''
     rm .cargo/config.toml
   '';
