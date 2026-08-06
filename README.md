@@ -16,8 +16,8 @@ upstream Zed.
 ## Zed compatibility baseline
 
 The current packaged compatibility baseline is
-[zed-industries/zed@f96212f2c50f54d93712fa130d6226b1ce7d76b5](https://github.com/zed-industries/zed/commit/f96212f2c50f54d93712fa130d6226b1ce7d76b5),
-the `v1.12.0` tag from July 22, 2026.
+[zed-industries/zed@02abf5b08fa12c1c20a155ae3f796ef4c6c1a01e](https://github.com/zed-industries/zed/commit/02abf5b08fa12c1c20a155ae3f796ef4c6c1a01e),
+the `v1.14.2` tag from August 5, 2026.
 
 That revision is the reference baseline for:
 
@@ -27,12 +27,13 @@ That revision is the reference baseline for:
 - RPC and Cloud WebSocket headers
 - collab's Postgres schema
 
-Compared with the previous `v1.11.3` baseline, the collab schema migration is
-byte-for-byte unchanged. Zed `v1.12.0` renamed the channel-member search route
-to `/internal/channel_members/fuzzy_search`; the facade implements that current
-route. The packaged collab carries a minimal `ZED_CLOUD_URL` configuration
-patch so production-mode collab can use the local facade instead of upstream
-Cloud for credential validation and internal user APIs.
+Compared with the previous `v1.12.0` baseline, the collab schema migration and
+the facade's authentication and internal API contracts are unchanged. The
+Cloud WebSocket client now sends periodic ping frames; the facade already
+answers them with pong frames. The packaged collab carries a minimal
+`ZED_CLOUD_URL` configuration patch so production-mode collab can use the local
+facade instead of upstream Cloud for credential validation and internal user
+APIs.
 
 Recheck these contracts when updating to a newer Zed revision.
 
