@@ -1,129 +1,146 @@
-# Zed local auth facade
+# Zed local cloud
 
-This service lets an unmodified Zed client authenticate with upstream Zed while
-using a local `crates/collab` server. It owns the public Zed-compatible routes,
-synchronizes authenticated users into collab's Postgres database, implements
-collab's internal user APIs locally, and leaves generic reverse proxying to
-Caddy.
+This project provides a local cloud service for an unmodified Zed client. It
+also provides a local Zed collaboration server.
 
-The facade listens internally on `http://localhost:8787` by default. The
-packaged collab server runs with `ZED_ENVIRONMENT=production`, with a small
-packaging patch that permits its Cloud URL to point at this local facade.
-Caddy provides the public HTTPS endpoint and routes RPC, extension, Cloud, and
-web traffic to the appropriate backend. Browser sign-in is delegated to
-upstream Zed.
+The local cloud uses OpenID Connect (OIDC) for user sign-in. It does not use a
+Zed account. It does not send login data to Zed Cloud.
 
-## Zed compatibility baseline
+Yes, this design can operate without a login to a Zed server. The extension
+catalog and extension downloads do not require a Zed login in the current Zed
+baseline. Caddy sends only extension requests to `https://api.zed.dev`. All
+other cloud and web requests stay on the local system. Caddy removes local
+authorization data and cookies from extension requests.
 
-The current packaged compatibility baseline is
-[zed-industries/zed@02abf5b08fa12c1c20a155ae3f796ef4c6c1a01e](https://github.com/zed-industries/zed/commit/02abf5b08fa12c1c20a155ae3f796ef4c6c1a01e),
-the `v1.14.2` tag from August 5, 2026.
+The upstream extension service can change. Test extension installation after
+each Zed update.
 
-That revision is the reference baseline for:
+This README uses short sentences and controlled terms. It follows the main
+writing rules of ASD-STE100 Simplified Technical English.
 
-- native app sign-in query and callback behavior
-- `GetAuthenticatedUserResponse` JSON fields
-- collab's internal user API request and response types
-- RPC and Cloud WebSocket headers
-- collab's Postgres schema
+## Compatibility baseline
 
-Compared with the previous `v1.12.0` baseline, the collab schema migration and
-the facade's authentication and internal API contracts are unchanged. The
-Cloud WebSocket client now sends periodic ping frames; the facade already
-answers them with pong frames. The packaged collab carries a minimal
-`ZED_CLOUD_URL` configuration patch so production-mode collab can use the local
-facade instead of upstream Cloud for credential validation and internal user
-APIs.
+The project uses
+[Zed v1.14.2](https://github.com/zed-industries/zed/tree/v1.14.2) as its
+compatibility baseline. This release has commit
+`02abf5b08fa12c1c20a155ae3f796ef4c6c1a01e`.
 
-Recheck these contracts when updating to a newer Zed revision.
+The baseline defines these interfaces:
 
-## Runtime architecture
+- The native application sign-in query and callback
+- The `/client/users/me` response
+- The collaboration internal user API
+- The collaboration WebSocket headers
+- The collaboration database schema
 
-- Postgres: `127.0.0.1:5432`, shared by collab and the facade
-- Local collab: `127.0.0.1:8080`
-- Local auth and internal API: `127.0.0.1:8787`
-- Public endpoint: Caddy, configured by the NixOS module
-- Zed setting: `ZED_SERVER_URL=https://zed.example.com`
+Check these interfaces before you update Zed.
 
-Caddy redirects `/rpc` to an absolute `/actual_rpc` URL on the incoming
-authority, then reverse proxies that WebSocket directly to collab's `/rpc` on
-port `8080`. The Rust service does not implement a generic HTTP or WebSocket
-proxy.
+## Components
 
-## Setup
+The default installation has these components:
 
-### Database
+| Component | Default address | Function |
+| --- | --- | --- |
+| PostgreSQL | Local socket | Store collaboration and local cloud data |
+| Zed collaboration server | `127.0.0.1:8080` | Provide collaboration RPC |
+| Zed local cloud | `127.0.0.1:8787` | Provide login and cloud API routes |
+| Caddy | Public HTTPS address | Route public requests |
+| OIDC provider | External or local address | Authenticate users |
 
-Use a fresh `zed` database. Load the schema from the reference Zed checkout:
+The local cloud uses the [Topcoat](https://github.com/tokio-rs/topcoat) web
+framework. It uses Topcoat sessions for the browser login transaction. It uses
+the [openidconnect](https://docs.rs/openidconnect/4.0.1/openidconnect/) crate
+for OIDC discovery, PKCE, token exchange, and token verification.
 
-```sh
-createdb -U postgres zed
-psql -U postgres -d zed \
-  -f /path/to/zed/crates/collab/migrations/20251208000000_test_schema.sql
-```
+The local cloud and the collaboration server use the same PostgreSQL database.
+They also use the same internal API key.
 
-The schema file is not idempotent. Skip these commands when the database is
-already bootstrapped.
+## Request flow
 
-The facade and collab must use the same database and internal API key. Zed's
-checked-in collab development configuration uses:
+The sign-in flow is as follows:
 
-```text
-DATABASE_URL=postgres://postgres@localhost/zed
-ZED_CLOUD_INTERNAL_API_KEY=internal-api-key-secret
-```
+1. Zed opens `/native_app_signin` in the browser.
+2. The local cloud validates the Zed RSA public key.
+3. The local cloud starts a Topcoat browser session.
+4. The user selects the OIDC sign-in button.
+5. The local cloud starts the OIDC authorization code flow with PKCE.
+6. The OIDC provider authenticates the user.
+7. The local cloud verifies the OIDC state, nonce, ID token, and access-token hash.
+8. The local cloud reads profile data from the ID token and the UserInfo endpoint.
+9. The local cloud writes the user and administrator status to PostgreSQL.
+10. The local cloud creates a new local Zed access token.
+11. The local cloud encrypts the token with the Zed RSA public key.
+12. The browser sends the encrypted token to the local Zed callback port.
 
-The facade applies its own `local_user_profiles` and `local_user_tokens`
-migration automatically at startup.
+The service stores only a SHA-256 hash of the local Zed access token. It does
+not store the OIDC access token or the OIDC client secret in PostgreSQL.
 
-### Start collab
+## OIDC claims
 
-Run collab inside Zed's upstream Nix development shell so it receives the
-correct OpenSSL and native dependencies:
+The local cloud uses the OIDC issuer and subject as the permanent user
+identity. It reads these standard claims:
 
-```sh
-cd /path/to/zed
-nix develop -c cargo run --package=collab -- serve collab
-```
+| Claim | Use |
+| --- | --- |
+| `preferred_username` | Create the local username |
+| `email` | Supply an email address and a username fallback |
+| `name` | Supply the display name |
+| `picture` | Supply the Zed `avatar_url` |
 
-### Start the facade
+The service reads claims from the verified ID token. If the provider has a
+UserInfo endpoint, the service also reads claims from that endpoint. A
+UserInfo value has priority over the same ID-token value.
 
-```sh
-cd /path/to/zed-auth
-DATABASE_URL=postgres://postgres@localhost/zed cargo run
-```
+The `picture` claim is optional. If it is not present, `avatar_url` is an
+empty string.
 
-To grant local collab administrator privileges, optionally add:
+The administrator claim is configurable. A string value or an array value is
+valid. Dot notation selects a nested claim. For example,
+`realm_access.roles` selects the `roles` member of `realm_access`.
 
-```sh
-LOCAL_ADMIN_GITHUB_LOGINS=your-github-login
-```
+The local cloud checks the administrator claim after each successful login.
+It sets `users.admin` to `true` when the configured value is present. It sets
+`users.admin` to `false` when the value is not present. The OIDC provider is
+the source of the local administrator role.
 
-### NixOS module
+## NixOS installation
 
-The flake exports the `zed-auth` and `zed-collab` packages, an overlay, and
-`nixosModules.default`. The collab derivation uses
-`inherit (zed-editor) src`, so its source revision follows the `zed-editor`
-package in the flake's nixpkgs input. Add both the overlay and module to your
-NixOS configuration:
+The flake exports these items:
+
+- The `zed-local-cloud` package for the local cloud
+- The `zed-collab` package for the collaboration server
+- The default NixOS module
+- A package overlay
+
+Use this example as a start:
 
 ```nix
 {
-  inputs.zed-auth.url = "github:your-name/zed-auth";
+  inputs.zed-local-cloud.url = "github:your-name/zed-local-cloud";
 
-  outputs = {nixpkgs, zed-auth, ...}: {
+  outputs = {nixpkgs, zed-local-cloud, ...}: {
     nixosConfigurations.your-host = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
-        zed-auth.nixosModules.default
+        zed-local-cloud.nixosModules.default
         {
-          nixpkgs.overlays = [zed-auth.overlays.default];
+          nixpkgs.overlays = [zed-local-cloud.overlays.default];
 
-          services.zed-auth = {
+          services.zed-local-cloud = {
             enable = true;
             virtualHost = "zed.example.com";
-            adminGithubLogins = ["your-github-login"];
+
+            oidc = {
+              issuerUrl = "https://auth.example.com";
+              clientId = "zed-local";
+              clientSecretFile = "/run/secrets/zed-oidc-client-secret";
+              redirectUrl = "https://zed.example.com/auth/oidc/callback";
+              scopes = ["profile" "email" "groups"];
+              adminClaim = "groups";
+              adminValue = "zed-admin";
+            };
           };
+
           services.caddy.openFirewall = true;
         }
       ];
@@ -132,223 +149,317 @@ NixOS configuration:
 }
 ```
 
-For a complete local VM using the module, PostgreSQL, and Caddy:
+Systemd loads `clientSecretFile` as a credential. The local cloud reads the
+raw secret from its private credential directory. The TOML configuration
+contains only the credential path.
 
-```console
-$ nix run .#vm
+The module creates a local PostgreSQL database by default. It creates the
+`zed` system user and the `zed` database. It uses PostgreSQL peer
+authentication.
+
+Set `services.zed-local-cloud.database.createLocally = false` for an external
+database. Then set `services.zed-local-cloud.database.url` to the external
+database URL.
+
+The `zed-setup` service creates a 128-byte internal API key on its first run.
+It writes only the raw key to `/var/lib/zed/internal-api-key`. Later runs keep
+the same non-empty file. The file mode is `0600`. The generated TOML
+configuration contains the path to this file. It does not contain the key.
+
+Each secret has a separate file. Each secret file contains only the raw
+secret. Do not use TOML syntax in a secret file.
+
+The setup service applies the collaboration schema. The local cloud applies
+its embedded migrations before it starts its HTTP listener.
+
+## Authelia example
+
+This example uses the current Authelia OIDC client schema. See the official
+[Authelia OIDC client reference](https://www.authelia.com/configuration/identity-providers/openid-connect/clients/).
+
+First, generate a client secret and its hash. Authelia prints the clear secret
+and the PBKDF2 hash.
+
+```sh
+authelia crypto hash generate pbkdf2 \
+  --variant sha512 \
+  --random \
+  --random.length 72 \
+  --random.charset rfc3986
 ```
 
-The VM forwards host `127.0.0.1:18787` to guest Caddy. Set Zed's
-`server_url` to `http://localhost:18787`. The VM uses the module's normal
-generated internal API key in its ephemeral state directory.
+Store the clear secret in `/run/secrets/zed-oidc-client-secret`. Store the
+hash in the Authelia configuration. Do not put the clear secret in the Nix
+store.
 
-Run the NixOS integration test with:
+Add this client to the Authelia configuration:
 
-```console
-$ nix build .#checks.x86_64-linux.nixos-basic
+```yaml
+identity_providers:
+  oidc:
+    # Keep the other required OIDC provider settings here.
+    clients:
+      - client_id: zed-local
+        client_name: Zed Local Cloud
+        client_secret: '<PBKDF2_HASH_FROM_THE_COMMAND>'
+        public: false
+        authorization_policy: two_factor
+        require_pkce: true
+        pkce_challenge_method: S256
+        redirect_uris:
+          - https://zed.example.com/auth/oidc/callback
+        scopes:
+          - openid
+          - profile
+          - email
+          - groups
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+        access_token_signed_response_alg: none
+        userinfo_signed_response_alg: none
+        token_endpoint_auth_method: client_secret_basic
 ```
 
-The test is defined in `tests/nixos/default.nix`. It boots a clean VM and
-checks database initialization, generated-key permissions and persistence,
-migration ordering, service users and health, Caddy routing, and the upstream
-sign-in completion redirect.
+Add each local administrator to the `zed-admin` group in Authelia. Use this
+local cloud configuration:
 
-The module creates a local PostgreSQL database owned by the configured system
-user and starts `zed-setup` before collab and the facade. All three units share
-the mode-`0700` `zed` systemd state directory and run as the configured system
-user/group. Collab records itself as a production server while using the
-facade's private listen URL for Cloud authentication and internal APIs. On its
-first run, `zed-setup` generates a 128-byte base64 internal API key with
-OpenSSL in `/var/lib/zed/zed-auth.toml`; later runs preserve the non-empty
-mode-`0600` file. It then applies the schema shipped with the packaged collab
-server using `sqlx migrate`. Collab and the facade read the same generated key
-directly from the shared state directory. The facade applies its own embedded
-migrations before binding its listener.
+```nix
+services.zed-local-cloud.oidc = {
+  issuerUrl = "https://auth.example.com";
+  clientId = "zed-local";
+  clientSecretFile = "/run/secrets/zed-oidc-client-secret";
+  redirectUrl = "https://zed.example.com/auth/oidc/callback";
+  scopes = ["profile" "email" "groups"];
+  adminClaim = "groups";
+  adminValue = "zed-admin";
+};
+```
 
-The database URL is not secret. Configure it with
-`services.zed-auth.database.url`; it defaults to the peer-authenticated local
-socket URL `postgres://zed@%2Frun%2Fpostgresql/zed`. The module passes it to
-setup, collab, and the facade as ordinary configuration.
+Authelia supplies the `groups` claim when the client requests the `groups`
+scope. The service requests `openid` automatically. Do not add `openid` to
+the Nix `scopes` list.
 
-SQLx records the collab schema migration in the shared database and skips it
-after the first successful run. Collab and the facade use distinct migration
-sets in the same SQLx ledger, so both migrators ignore versions owned by the
-other set while still validating their own checksums. When local database
-management is enabled,
-`services.zed-auth.database.name` must match `services.zed-auth.user` so
-PostgreSQL can grant ownership and use peer authentication without a password;
-both default to `zed`. Set `services.zed-auth.database.createLocally = false`
-when using an externally managed database; `zed-setup` still runs migrations
-against `services.zed-auth.database.url`. The facade listens only on loopback.
-The module enables Caddy and configures the complete public reverse proxy;
-configure `services.caddy.openFirewall` as usual if Caddy should open ports 80
-and 443.
+Authelia can supply the standard `picture` claim as part of profile data. If
+Authelia has this value for a user, the local cloud uses it as the Zed avatar
+URL.
 
-The upstream collab migration is currently a full schema snapshot whose
-numeric SQLx version has remained unchanged across Zed releases. If upstream
-edits that file, SQLx rejects an existing database because its recorded
-checksum no longer matches; it does not derive an incremental upgrade.
-Therefore, before advancing this project's Zed baseline across a schema
-change, add and test a project-owned incremental migration for existing
-databases. A fresh database continues to use the packaged upstream snapshot.
+For secret generation details, see the official
+[Authelia OIDC FAQ](https://www.authelia.com/integration/openid-connect/frequently-asked-questions/).
 
-### Start Zed
+## Standalone installation
+
+Use a fresh database for the first installation. Apply the Zed collaboration
+schema from the compatible Zed source tree:
+
+```sh
+createdb -U postgres zed
+psql -U postgres -d zed \
+  -f /path/to/zed/crates/collab/migrations/20251208000000_test_schema.sql
+```
+
+Do not apply the schema file a second time. The schema file is not idempotent.
+
+Create a raw internal API key file. Replace the example paths with absolute
+paths for your installation.
+
+```sh
+umask 077
+openssl rand -base64 128 | tr -d '\n' > /var/lib/zed/internal-api-key
+```
+
+Store the OIDC client secret in a different file. The file must contain only
+the raw client secret. Do not add a key name, quotes, or TOML syntax.
+
+Create `zed-local-cloud.toml`:
+
+```toml
+bind_address = "127.0.0.1:8787"
+database_url = "postgres://postgres@localhost/zed"
+internal_api_key_file = "/var/lib/zed/internal-api-key"
+log_level = "zed_local_cloud=info,sqlx=warn"
+
+[oidc]
+issuer_url = "https://auth.example.com"
+client_id = "zed-local"
+client_secret_file = "/run/secrets/zed-oidc-client-secret"
+redirect_url = "https://zed.example.com/auth/oidc/callback"
+scopes = ["profile", "email", "groups"]
+admin_claim = "groups"
+admin_value = "zed-admin"
+```
+
+Start the collaboration server from the compatible Zed source tree:
 
 ```sh
 cd /path/to/zed
-ZED_SERVER_URL=https://zed.example.com nix develop -c cargo run --package=zed
+nix develop -c cargo run --package=collab -- serve collab
 ```
 
-Sign in normally. The browser uses upstream `zed.dev`, while subsequent Cloud
-and collaboration requests go through the local facade.
-
-### Upstream service terms
-
-Zed's open-source licenses govern the packaged software, but use of
-Zed-operated authentication, API, extension, and web services is separately
-subject to the [Zed Terms of Service](https://zed.dev/terms). This project is
-unofficial, and Zed does not currently document this hybrid self-hosting setup
-as a supported service-access mechanism. In particular, the Terms restrict
-access to non-public service APIs and require use of Zed-designated access
-mechanisms. Obtain Zed's confirmation before operating this for third parties.
-
-This project does not proxy Zed-hosted LLM requests. It returns a local empty
-model catalog, leaving Zed's supported direct-provider, gateway, and local
-model integrations available to each client.
-
-## Authentication and user synchronization
-
-`GET /native_app_signin` preserves Zed's native app query parameters and
-redirects the browser to upstream Zed. Upstream returns the RSA-encrypted access
-token directly to the native app.
-
-On `GET /client/users/me`, the facade:
-
-1. Parses `Authorization: <user_id> <access_token>`.
-2. Validates the unchanged credentials with upstream Cloud.
-3. Verifies that the returned user ID matches the header.
-4. Inserts or updates the user in collab's `users` table.
-5. Preserves collab's existing `connected_once` value.
-6. Inserts or updates `local_user_profiles`.
-7. Stores only a SHA-256 token hash in `local_user_tokens`.
-8. Returns a local organization with collaboration enabled and hosted AI
-   disabled.
-
-Upstream access tokens are never stored in plaintext.
-
-`GET /client/users/connect` validates the cached credential hash and keeps the
-Cloud WebSocket alive. It does not currently send account-change events.
-
-## Data ownership and local administrators
-
-Collab owns the `users` table and collaboration foreign keys. The facade adds:
-
-- `local_user_profiles`: GitHub login, avatar, name, optional email, upstream
-  metrics ID, and original upstream staff status
-- `local_user_tokens`: SHA-256 access-token hash and validation timestamp
-
-`LOCAL_ADMIN_GITHUB_LOGINS` is an optional comma-separated, case-insensitive
-list. Matching users receive `users.admin = true`. The facade also maps this to
-`user.is_staff` in its local response because collab derives its principal's
-admin flag from that field. This does not change upstream Zed permissions.
-
-Facade-owned tables are created by
-`migrations/20260724000000_local_facade.sql`. The old prototype migration that
-created its own incompatible `users` table has been removed; collab must apply
-its schema first. Existing databases that recorded the old migration remain
-usable because the facade migrator ignores migration versions owned by another
-or removed migration set.
-
-## Internal API key
-
-`ZED_CLOUD_INTERNAL_API_KEY` is an arbitrary shared local secret. The NixOS
-module generates it automatically in `/var/lib/zed/zed-auth.toml` and provides
-the same value to collab and the facade. It is not issued by upstream Zed and
-is never sent there.
-
-For a standalone non-NixOS deployment, configure the same value for both
-processes:
+Start the local cloud:
 
 ```sh
-ZED_CLOUD_INTERNAL_API_KEY=your-local-secret
+cd /path/to/zed-local-cloud
+nix develop -c cargo run -- --config ./zed-local-cloud.toml
 ```
 
-Collab uses it as a Bearer token when calling these locally implemented
-endpoints:
+The local cloud performs OIDC discovery during startup. Startup fails if the
+provider is not available or its discovery data is not valid.
+
+## Zed configuration
+
+Set the public service URL before you start Zed:
+
+```sh
+cd /path/to/zed
+ZED_SERVER_URL=https://zed.example.com \
+  nix develop -c cargo run --package=zed
+```
+
+Select **Sign In** in Zed. The browser shows the local Topcoat login page. The
+browser then opens the configured OIDC provider.
+
+## Caddy routes
+
+The NixOS module uses a small Caddy route table:
+
+| Public path | Destination |
+| --- | --- |
+| `/rpc` | Redirect to `/actual_rpc` on the same authority |
+| `/actual_rpc` | Local collaboration server `/rpc` |
+| `/extensions` and `/extensions/*` | `https://api.zed.dev` |
+| All other paths | Local cloud service |
+
+The Rust service supplies `/models`. It returns an empty hosted-model catalog.
+The service does not proxy Zed-hosted language models.
+
+The service returns `204` for supported feedback routes. Other telemetry
+routes do not have a handler and return `404`. No telemetry route goes to an
+upstream server.
+
+## Local cloud routes
+
+The local cloud supplies these public client routes:
+
+- `GET /native_app_signin`
+- `POST /auth/oidc/start`
+- `GET /auth/oidc/callback`
+- `GET /native_app_signin_succeeded`
+- `GET /client/users/me`
+- `GET /client/users/connect`
+- `PATCH` or `POST /client/system_settings`
+- `POST /client/llm_tokens`
+- `POST /client/feedback/*`
+- `GET /models`
+- `GET /healthz`
+
+The local cloud supplies these internal collaboration routes:
 
 - `POST /internal/users/look_up_by_legacy_id`
 - `POST /internal/users/look_up_by_github_login`
 - `POST /internal/users/fuzzy_search`
 - `POST /internal/channel_members/fuzzy_search`
 
-Only users who have authenticated through this facade appear in local lookup
-and search results.
-
-## Routes and Caddy behavior
-
-The facade handles only:
-
-- `GET /native_app_signin`: redirect to upstream native sign-in
-- `GET /client/users/me`: upstream validation and local synchronization
-- `GET /client/users/connect`: local keepalive WebSocket
-- `PATCH` or `POST /client/system_settings`: local minimal response
-- `POST /client/llm_tokens`: returns a non-secret local placeholder token after
-  authenticating the user
-- client feedback routes: return `204`
-
-The module's Caddy virtual host uses named matchers to route:
-
-- `/rpc`: temporary redirect to the absolute `/actual_rpc` URL for the
-  incoming scheme and authority
-- `/native_app_signin_succeeded`: redirect to upstream Zed's static
-  confirmation page
-- `/actual_rpc`: rewrite to `/rpc` and WebSocket proxy directly to collab
-- `/models`: return an empty hosted-model catalog locally
-- facade-owned routes: proxy to `127.0.0.1:8787`
-- `/extensions*`: proxy to `https://api.zed.dev`
-- remaining `/client/*`: proxy to upstream Cloud
-- remaining paths: proxy to upstream web
+The collaboration server uses the shared internal API key as a Bearer token.
+Users appear in local search results only after their first local OIDC login.
 
 ## Configuration
 
-| Variable | Default | Purpose |
+Start `zed-local-cloud` with `--config` and the path to one TOML file. The
+service does not read its configuration from environment variables.
+
+| TOML key | Default | Function |
 | --- | --- | --- |
-| `BIND_ADDRESS` | `127.0.0.1:8787` | Facade listen address |
-| `DATABASE_URL` | `postgres://zed@%2Frun%2Fpostgresql/zed` | Shared collab Postgres database |
-| `UPSTREAM_WEB_URL` | `https://zed.dev` | Native sign-in origin |
-| `UPSTREAM_CLOUD_URL` | `https://cloud.zed.dev` | Credential validation origin |
-| `ZED_CLOUD_INTERNAL_API_KEY` | `internal-api-key-secret` | Shared local internal API secret |
-| `LOCAL_ADMIN_GITHUB_LOGINS` | empty | Comma-separated local collab administrators |
-| `RUST_LOG` | `zed_auth=info,tower_http=info,sqlx=warn` | Tracing filter |
-| `ZED_AUTH_SECRETS_FILE` | unset | TOML secrets file for standalone deployments |
+| `bind_address` | `127.0.0.1:8787` | Set the local cloud listen address |
+| `database_url` | Local `zed` socket URL | Set the shared PostgreSQL URL |
+| `internal_api_key_file` | Required | Set the path to the raw internal API key |
+| `log_level` | `zed_local_cloud=info,sqlx=warn` | Set the tracing filter |
+| `oidc.issuer_url` | Required | Set the OIDC issuer URL |
+| `oidc.client_id` | Required | Set the OIDC client identifier |
+| `oidc.client_secret_file` | Empty | Set the path to the raw OIDC client secret |
+| `oidc.redirect_url` | Required | Set the registered callback URL |
+| `oidc.scopes` | `profile`, `email` | Set the additional OIDC scopes |
+| `oidc.admin_claim` | `roles` | Set the administrator claim path |
+| `oidc.admin_value` | `admin` | Set the administrator claim value |
 
-## Validation status
+Do not put secret values in the TOML file. Use one raw file for each secret.
+The service removes leading and trailing white space when it reads a secret.
 
-- Upstream browser handoff, callback, and complete authentication work against
-  the packaged baseline above.
-- The local collab RPC connection works through Caddy.
-- Rust formatting and Clippy with warnings denied pass.
-- The regular Rust tests pass.
-- The opt-in auth/database integration test passes against Postgres initialized
-  with Zed's actual collab schema.
-- Both SQLx migrations apply to that schema.
-- Runtime key generation and persistence, service health, authentication
-  rejection, and native sign-in redirect checks pass.
-- The Zed reference worktree remains unchanged.
+## Database ownership
 
-The remaining manual acceptance work is a two-user collaboration check:
+The collaboration server owns the `users` table and all collaboration foreign
+keys. The local cloud adds these tables:
 
-1. Confirm synchronized rows in `users`, `local_user_profiles`, and
-   `local_user_tokens`.
-2. Sign in with a second user.
-3. Verify local user search, contacts, invitations, and collaboration.
-4. Confirm search never includes upstream users who have not used this local
-   instance.
+- `local_user_profiles` for local profile data
+- `local_user_tokens` for local token hashes
+- `local_oidc_identities` for issuer and subject links
+- `local_login_sessions` for short browser login transactions
 
-## Known limitations
+The login-session table stores the Topcoat session token hash. It does not
+store the browser session token.
 
-- `/client/users/connect` is keepalive-only, so some account UI may remain stale
-  until reconnect or restart.
-- Hosted Zed AI is intentionally disabled for the local organization.
-- Extension installation through the Caddy proxy has not yet been manually
-  tested.
+SQLx uses one migration ledger for the collaboration server and the local
+cloud. Each migrator ignores migration versions that belong to the other
+component.
+
+The upstream collaboration migration is a schema snapshot. Its version can
+stay the same when upstream changes its contents. SQLx rejects an old database
+if the recorded checksum is different. Add a local incremental migration
+before you update to a Zed release with a new schema.
+
+## Security limits
+
+The local cloud accepts only the OIDC authorization code flow. It requires
+PKCE with SHA-256. It validates the callback state and nonce. It validates the
+ID-token signature, issuer, audience, expiry, and access-token hash.
+
+The default Topcoat session cookie is Secure, HttpOnly, SameSite=Lax, and
+limited to the root path. Use HTTPS for the public service.
+
+The extension proxy still uses a Zed-operated service. Zed service terms can
+apply to this access. This project is unofficial. Zed does not document this
+configuration as a supported self-hosted service.
+
+## Tests
+
+Run the Rust tests:
+
+```sh
+nix develop -c cargo test --locked
+```
+
+Run all flake checks:
+
+```sh
+nix flake check
+```
+
+Run the NixOS integration test:
+
+```sh
+nix build .#checks.x86_64-linux.nixos-basic
+```
+
+Start the NixOS integration test in interactive mode:
+
+```sh
+nix build '.#checks.x86_64-linux.nixos-basic.driverInteractive'
+./result/bin/nixos-test-driver
+```
+
+The virtual machine uses a local OIDC test provider. The test checks OIDC
+discovery, PKCE, token validation, UserInfo, the picture claim, and the
+administrator role. The test grants the role and then removes it.
+
+The virtual machine also uses a local extension API. The test checks the list
+path and a nested download path. It checks query parameters. It also checks
+that Caddy removes local authorization data and cookies.
+
+## Known limits
+
+- `/client/users/connect` keeps the WebSocket open. It does not send account-change events.
+- Hosted Zed AI is disabled for the local organization.
+- The service has no user-management page.
+- The extension proxy depends on the public behavior of the Zed extension service.
+- Perform a two-user collaboration acceptance test before production use.

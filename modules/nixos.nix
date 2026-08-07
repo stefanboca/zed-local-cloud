@@ -8,9 +8,28 @@
   inherit (lib.meta) getExe;
   inherit (lib.modules) mkIf;
   inherit (lib.options) mkEnableOption mkOption mkPackageOption;
-  inherit (lib.types) bool int listOf port str;
+  inherit (lib.types) bool int listOf nullOr port str;
 
-  cfg = config.services.zed-auth;
+  cfg = config.services.zed-local-cloud;
+
+  localCloudConfig = (pkgs.formats.toml {}).generate "zed-local-cloud.toml" {
+    bind_address = "${cfg.host}:${toString cfg.port}";
+    database_url = cfg.database.url;
+    internal_api_key_file = "/var/lib/zed/internal-api-key";
+    log_level = cfg.logLevel;
+    oidc =
+      {
+        admin_claim = cfg.oidc.adminClaim;
+        admin_value = cfg.oidc.adminValue;
+        client_id = cfg.oidc.clientId;
+        issuer_url = cfg.oidc.issuerUrl;
+        redirect_url = cfg.oidc.redirectUrl;
+        scopes = cfg.oidc.scopes;
+      }
+      // lib.optionalAttrs (cfg.oidc.clientSecretFile != null) {
+        client_secret_file = "/run/credentials/zed-local-cloud.service/oidc-client-secret";
+      };
+  };
 
   collabEnvironment = (pkgs.formats.toml {}).generate "zed-collab.toml" {
     DATABASE_URL = cfg.database.url;
@@ -46,32 +65,32 @@
     UMask = "0077";
   };
 in {
-  options.services.zed-auth = {
+  options.services.zed-local-cloud = {
     enable = mkEnableOption "the local Zed authentication and collaboration stack";
-    package = mkPackageOption pkgs "zed-auth" {};
+    package = mkPackageOption pkgs "zed-local-cloud" {};
 
     user = mkOption {
       type = str;
       default = "zed";
-      description = "User under which the facade and collab server run.";
+      description = "User under which the local cloud and collab server run.";
     };
 
     group = mkOption {
       type = str;
       default = "zed";
-      description = "Group under which the facade and collab server run.";
+      description = "Group under which the local cloud and collab server run.";
     };
 
     host = mkOption {
       type = str;
       default = "127.0.0.1";
-      description = "Address on which the facade listens.";
+      description = "Address on which the local cloud listens.";
     };
 
     port = mkOption {
       type = port;
       default = 8787;
-      description = "Port on which the facade listens.";
+      description = "Port on which the local cloud listens.";
     };
 
     virtualHost = mkOption {
@@ -80,35 +99,61 @@ in {
       description = "Caddy virtual host serving the public Zed-compatible endpoint.";
     };
 
-    upstreamWebUrl = mkOption {
-      type = str;
-      default = "https://zed.dev";
-      description = "Upstream origin used for native sign-in and web routes.";
-    };
-
     upstreamApiUrl = mkOption {
       type = str;
       default = "https://api.zed.dev";
       description = "Upstream origin used for extension API routes.";
     };
 
-    upstreamCloudUrl = mkOption {
-      type = str;
-      default = "https://cloud.zed.dev";
-      description = "Upstream origin used to validate users and proxy Cloud API routes.";
-    };
+    oidc = {
+      issuerUrl = mkOption {
+        type = str;
+        example = "https://auth.example.com";
+        description = "OIDC issuer URL.";
+      };
 
-    adminGithubLogins = mkOption {
-      type = listOf str;
-      default = [];
-      example = ["octocat"];
-      description = "GitHub logins which receive administrator privileges in local collab.";
+      clientId = mkOption {
+        type = str;
+        example = "zed-local";
+        description = "OIDC client identifier.";
+      };
+
+      clientSecretFile = mkOption {
+        type = nullOr str;
+        default = null;
+        example = "/run/secrets/zed-oidc-client-secret";
+        description = "File that contains the OIDC client secret. Use null for a public client.";
+      };
+
+      redirectUrl = mkOption {
+        type = str;
+        example = "https://zed.example.com/auth/oidc/callback";
+        description = "OIDC redirect URL registered with the provider.";
+      };
+
+      scopes = mkOption {
+        type = listOf str;
+        default = ["profile" "email"];
+        description = "OIDC scopes in addition to the required openid scope.";
+      };
+
+      adminClaim = mkOption {
+        type = str;
+        default = "roles";
+        description = "OIDC claim that contains the administrator value. Dot notation selects nested claims.";
+      };
+
+      adminValue = mkOption {
+        type = str;
+        default = "admin";
+        description = "OIDC claim value that grants local administrator privileges.";
+      };
     };
 
     logLevel = mkOption {
       type = str;
-      default = "zed_auth=info,tower_http=info,sqlx=warn";
-      description = "Tracing filter used by the facade.";
+      default = "zed_local_cloud=info,sqlx=warn";
+      description = "Tracing filter used by the local cloud.";
     };
 
     collab = {
@@ -161,7 +206,7 @@ in {
       url = mkOption {
         type = str;
         default = "postgres://${cfg.user}@%2Frun%2Fpostgresql/${cfg.database.name}";
-        description = "PostgreSQL URL shared by collab and the authentication facade.";
+        description = "PostgreSQL URL shared by collab and the local cloud.";
       };
     };
   };
@@ -170,12 +215,12 @@ in {
     assertions = [
       {
         assertion = cfg.collab.databaseMaxConnections > 0;
-        message = "services.zed-auth.collab.databaseMaxConnections must be positive.";
+        message = "services.zed-local-cloud.collab.databaseMaxConnections must be positive.";
       }
       {
         assertion = !cfg.database.createLocally || cfg.database.name == cfg.user;
         message = ''
-          services.zed-auth.database.name must equal services.zed-auth.user
+          services.zed-local-cloud.database.name must equal services.zed-local-cloud.user
           when createLocally is enabled, so PostgreSQL peer authentication and
           database ownership work without a password.
         '';
@@ -202,82 +247,67 @@ in {
     services.caddy = {
       enable = true;
       virtualHosts.${cfg.virtualHost}.extraConfig = ''
-        @rpc path /rpc
-        @collab path /actual_rpc
-        @signinSucceeded path /native_app_signin_succeeded
-        @models {
-          method GET
-          path /models
-        }
-        @facade {
-          path /healthz /native_app_signin /internal/* /client/users/me /client/users/connect /client/system_settings /client/llm_tokens /client/feedback/*
-        }
-        @upstreamApi path /extensions /extensions/*
-        @upstreamCloud path /client/*
-        @upstreamWeb path /*
-
         route {
-          redir @rpc {http.request.scheme}://{http.request.hostport}/actual_rpc 307
-          redir @signinSucceeded ${cfg.upstreamWebUrl}/native_app_signin_succeeded 302
-          respond @models `{"models":[],"default_model":null,"default_fast_model":null,"recommended_models":[]}` 200
-
-          reverse_proxy @collab 127.0.0.1:${toString cfg.collab.port} {
-            rewrite /rpc
+          redir /rpc {http.request.scheme}://{http.request.hostport}/actual_rpc 307
+          handle /actual_rpc {
+            rewrite * /rpc
+            reverse_proxy 127.0.0.1:${toString cfg.collab.port}
           }
-          reverse_proxy @facade ${cfg.host}:${toString cfg.port}
-          reverse_proxy @upstreamApi ${cfg.upstreamApiUrl}
-          reverse_proxy @upstreamCloud ${cfg.upstreamCloudUrl}
-          reverse_proxy @upstreamWeb ${cfg.upstreamWebUrl}
+          @extensions path /extensions /extensions/*
+          handle @extensions {
+            reverse_proxy ${cfg.upstreamApiUrl} {
+              header_up -Authorization
+              header_up -Cookie
+              header_up Host {upstream_hostport}
+            }
+          }
+          handle {
+            reverse_proxy ${cfg.host}:${toString cfg.port}
+          }
         }
       '';
     };
 
     systemd.services = {
       caddy = {
-        wants = ["zed-auth.service" "zed-collab.service"];
-        after = ["zed-auth.service" "zed-collab.service"];
+        wants = ["zed-local-cloud.service" "zed-collab.service"];
+        after = ["zed-local-cloud.service" "zed-collab.service"];
       };
 
-      zed-auth = {
-        description = "Zed local authentication facade";
+      zed-local-cloud = {
+        description = "Zed local cloud service";
         wantedBy = ["multi-user.target"];
         requires = ["zed-setup.service"];
         after = ["zed-setup.service"];
 
-        environment = {
-          BIND_ADDRESS = "${cfg.host}:${toString cfg.port}";
-          DATABASE_URL = lib.replaceStrings ["%"] ["%%"] cfg.database.url;
-          LOCAL_ADMIN_GITHUB_LOGINS = lib.concatStringsSep "," cfg.adminGithubLogins;
-          RUST_LOG = cfg.logLevel;
-          UPSTREAM_CLOUD_URL = cfg.upstreamCloudUrl;
-          UPSTREAM_WEB_URL = cfg.upstreamWebUrl;
-          ZED_AUTH_SECRETS_FILE = "%S/zed/zed-auth.toml";
-        };
-
         serviceConfig =
           hardening
           // {
-            ExecStart = getExe cfg.package;
+            ExecStart = "${getExe cfg.package} --config ${localCloudConfig}";
             Group = cfg.group;
             Restart = "on-failure";
             RestartSec = 5;
             StateDirectory = "zed";
             StateDirectoryMode = "0700";
             User = cfg.user;
+          }
+          // lib.optionalAttrs (cfg.oidc.clientSecretFile != null) {
+            LoadCredential = ["oidc-client-secret:${toString cfg.oidc.clientSecretFile}"];
           };
       };
 
       zed-collab = {
         description = "Zed collaboration server";
         wantedBy = ["multi-user.target"];
-        requires = ["zed-auth.service" "zed-setup.service"];
-        after = ["zed-auth.service" "zed-setup.service"];
+        requires = ["zed-local-cloud.service" "zed-setup.service"];
+        after = ["zed-local-cloud.service" "zed-setup.service"];
 
         preStart = ''
           mkdir -p "$RUNTIME_DIRECTORY/crates/collab"
           ln -sf ${collabEnvironment} "$RUNTIME_DIRECTORY/crates/collab/.env.toml"
-          ln -sf "$STATE_DIRECTORY/zed-auth.toml" \
-            "$RUNTIME_DIRECTORY/crates/collab/.env.secret.toml"
+          cat >"$RUNTIME_DIRECTORY/crates/collab/.env.secret.toml" <<EOF
+          ZED_CLOUD_INTERNAL_API_KEY = "$(< "$STATE_DIRECTORY/internal-api-key")"
+          EOF
         '';
 
         serviceConfig =
@@ -300,12 +330,12 @@ in {
         description = "Initialize the local Zed services";
         requires = postgresqlDependencies;
         after = postgresqlDependencies;
-        before = ["zed-auth.service" "zed-collab.service"];
+        before = ["zed-local-cloud.service" "zed-collab.service"];
 
         environment.DATABASE_URL = lib.replaceStrings ["%"] ["%%"] cfg.database.url;
 
         script = ''
-          secret_file="$STATE_DIRECTORY/zed-auth.toml"
+          secret_file="$STATE_DIRECTORY/internal-api-key"
           (
             set -euo pipefail
             umask 0077
@@ -314,7 +344,7 @@ in {
                 ${getExe pkgs.openssl} rand -base64 128 \
                   | ${lib.getExe' pkgs.coreutils "tr"} -d '\n'
               )"
-              printf 'ZED_CLOUD_INTERNAL_API_KEY = "%s"\n' "$key" >"$secret_file"
+              printf '%s' "$key" >"$secret_file"
             fi
           )
 

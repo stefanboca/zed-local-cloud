@@ -8,7 +8,7 @@
   inherit (lib.strings) hasPrefix;
 in
   rustPlatform.buildRustPackage {
-    pname = "zed-auth";
+    pname = "zed-local-cloud";
     version = "0.1.0";
 
     src = toSource {
@@ -26,8 +26,8 @@ in
     buildInputs = [openssl];
 
     meta = {
-      description = "Local authentication and Cloud API facade for Zed collab";
-      mainProgram = "zed-auth";
+      description = "Local cloud and OIDC service for Zed collab";
+      mainProgram = "zed-local-cloud";
       platforms = lib.platforms.linux;
     };
   }

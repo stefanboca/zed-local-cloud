@@ -1,147 +1,162 @@
 use std::{
-    collections::HashSet,
-    env, fs,
+    fs,
     net::SocketAddr,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use url::Url;
 
-const SYSTEMD_CREDENTIAL_NAME: &str = "zed-auth.toml";
-
 #[derive(Clone, Debug)]
 pub struct Config {
     pub bind_address: SocketAddr,
     pub database_url: String,
-    pub upstream_web_url: Url,
-    pub upstream_cloud_url: Url,
     pub internal_api_key: String,
-    pub admin_github_logins: HashSet<String>,
+    pub log_level: String,
+    pub oidc_issuer_url: String,
+    pub oidc_client_id: String,
+    pub oidc_client_secret: Option<String>,
+    pub oidc_redirect_url: String,
+    pub oidc_scopes: Vec<String>,
+    pub oidc_admin_claim: String,
+    pub oidc_admin_value: String,
 }
 
 impl Config {
-    pub fn from_env() -> anyhow::Result<Self> {
-        let secrets = Secrets::load()?;
-        let bind_address = parse("BIND_ADDRESS", env_or("BIND_ADDRESS", "127.0.0.1:8787"))?;
-        let upstream_web_url = parse_url(
-            "UPSTREAM_WEB_URL",
-            &env_or("UPSTREAM_WEB_URL", "https://zed.dev"),
-        )?;
-        let upstream_cloud_url = parse_url(
-            "UPSTREAM_CLOUD_URL",
-            &env_or("UPSTREAM_CLOUD_URL", "https://cloud.zed.dev"),
-        )?;
-        let internal_api_key = secrets
-            .internal_api_key
-            .unwrap_or_else(|| env_or("ZED_CLOUD_INTERNAL_API_KEY", "internal-api-key-secret"));
+    pub fn from_file(path: &Path) -> anyhow::Result<Self> {
+        let contents = fs::read_to_string(path)
+            .with_context(|| format!("failed to read config file {}", path.display()))?;
+        let config: ConfigFile = toml::from_str(&contents)
+            .with_context(|| format!("failed to parse config file {}", path.display()))?;
+        config.load()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigFile {
+    #[serde(default = "default_bind_address")]
+    bind_address: SocketAddr,
+    #[serde(default = "default_database_url")]
+    database_url: String,
+    internal_api_key_file: PathBuf,
+    #[serde(default = "default_log_level")]
+    log_level: String,
+    oidc: OidcConfigFile,
+}
+
+impl ConfigFile {
+    fn load(self) -> anyhow::Result<Config> {
         ensure!(
-            !internal_api_key.trim().is_empty(),
-            "ZED_CLOUD_INTERNAL_API_KEY must not be empty"
+            !self.database_url.trim().is_empty(),
+            "database_url must not be empty"
+        );
+        ensure!(
+            !self.log_level.trim().is_empty(),
+            "log_level must not be empty"
+        );
+        ensure!(
+            !self.oidc.client_id.trim().is_empty(),
+            "oidc.client_id must not be empty"
+        );
+        ensure!(
+            !self.oidc.admin_claim.trim().is_empty(),
+            "oidc.admin_claim must not be empty"
+        );
+        ensure!(
+            !self.oidc.admin_value.trim().is_empty(),
+            "oidc.admin_value must not be empty"
         );
 
-        let admin_github_logins = env::var("LOCAL_ADMIN_GITHUB_LOGINS")
-            .unwrap_or_default()
-            .split(',')
-            .map(str::trim)
-            .filter(|login| !login.is_empty())
-            .map(|login| login.to_lowercase())
+        let internal_api_key = read_secret(&self.internal_api_key_file, "internal_api_key_file")?;
+        let oidc_client_secret = self
+            .oidc
+            .client_secret_file
+            .as_deref()
+            .map(|path| read_secret(path, "oidc.client_secret_file"))
+            .transpose()?;
+        let oidc_scopes = self
+            .oidc
+            .scopes
+            .into_iter()
+            .map(|scope| scope.trim().to_owned())
+            .filter(|scope| !scope.is_empty() && scope != "openid")
             .collect();
 
-        Ok(Self {
-            bind_address,
-            database_url: secrets.database_url.unwrap_or_else(|| {
-                env_or("DATABASE_URL", "postgres://zed@%2Frun%2Fpostgresql/zed")
-            }),
-            upstream_web_url,
-            upstream_cloud_url,
+        Ok(Config {
+            bind_address: self.bind_address,
+            database_url: self.database_url,
             internal_api_key,
-            admin_github_logins,
+            log_level: self.log_level,
+            oidc_issuer_url: checked_url("oidc.issuer_url", self.oidc.issuer_url)?,
+            oidc_client_id: self.oidc.client_id,
+            oidc_client_secret,
+            oidc_redirect_url: checked_url("oidc.redirect_url", self.oidc.redirect_url)?,
+            oidc_scopes,
+            oidc_admin_claim: self.oidc.admin_claim,
+            oidc_admin_value: self.oidc.admin_value,
         })
     }
-
-    pub fn is_admin(&self, github_login: &str) -> bool {
-        self.admin_github_logins
-            .contains(&github_login.to_lowercase())
-    }
-
-    #[cfg(test)]
-    pub fn test() -> Self {
-        Self {
-            bind_address: "127.0.0.1:8787".parse().expect("valid test address"),
-            database_url: "postgres://localhost/zed".to_owned(),
-            upstream_web_url: Url::parse("https://zed.dev").expect("valid test URL"),
-            upstream_cloud_url: Url::parse("https://cloud.zed.dev").expect("valid test URL"),
-            internal_api_key: "test-internal-api-key".to_owned(),
-            admin_github_logins: HashSet::new(),
-        }
-    }
 }
 
-#[derive(Default, Deserialize)]
-struct Secrets {
-    #[serde(alias = "DATABASE_URL")]
-    database_url: Option<String>,
-    #[serde(alias = "ZED_CLOUD_INTERNAL_API_KEY")]
-    internal_api_key: Option<String>,
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OidcConfigFile {
+    issuer_url: String,
+    client_id: String,
+    client_secret_file: Option<PathBuf>,
+    redirect_url: String,
+    #[serde(default = "default_oidc_scopes")]
+    scopes: Vec<String>,
+    #[serde(default = "default_admin_claim")]
+    admin_claim: String,
+    #[serde(default = "default_admin_value")]
+    admin_value: String,
 }
 
-impl Secrets {
-    fn load() -> anyhow::Result<Self> {
-        if let Some(path) = env::var_os("ZED_AUTH_SECRETS_FILE") {
-            return Self::read(Path::new(&path));
-        }
-
-        let Some(credentials_directory) = env::var_os("CREDENTIALS_DIRECTORY") else {
-            return Ok(Self::default());
-        };
-        let path = PathBuf::from(credentials_directory).join(SYSTEMD_CREDENTIAL_NAME);
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-
-        Self::read(&path)
-    }
-
-    fn read(path: &Path) -> anyhow::Result<Self> {
-        let contents = fs::read_to_string(path)
-            .with_context(|| format!("failed to read secrets file {}", path.display()))?;
-        toml::from_str(&contents)
-            .with_context(|| format!("failed to parse secrets file {}", path.display()))
-    }
+fn read_secret(path: &Path, name: &str) -> anyhow::Result<String> {
+    let value = fs::read_to_string(path)
+        .with_context(|| format!("failed to read {name} at {}", path.display()))?;
+    let value = value.trim().to_owned();
+    ensure!(!value.is_empty(), "{name} must not be empty");
+    Ok(value)
 }
 
-pub fn url_with_path(base: &Url, path: &str, query: Option<&str>) -> Url {
-    let mut url = base.clone();
-    url.set_path(path);
-    url.set_query(query);
-    url
-}
-
-fn env_or(name: &str, default: &str) -> String {
-    env::var(name).unwrap_or_else(|_| default.to_owned())
-}
-
-fn parse<T>(name: &str, value: String) -> anyhow::Result<T>
-where
-    T: FromStr,
-    T::Err: std::error::Error + Send + Sync + 'static,
-{
-    value
-        .parse()
-        .with_context(|| format!("{name} has an invalid value"))
-}
-
-fn parse_url(name: &str, value: &str) -> anyhow::Result<Url> {
-    let url = Url::parse(value).with_context(|| format!("{name} is not a valid URL"))?;
+fn checked_url(name: &str, value: String) -> anyhow::Result<String> {
+    let url = Url::parse(&value).with_context(|| format!("{name} is not a valid URL"))?;
     ensure!(
         matches!(url.scheme(), "http" | "https"),
         "{name} must use http or https"
     );
     ensure!(url.host_str().is_some(), "{name} must include a host");
-    Ok(url)
+    Ok(value)
+}
+
+fn default_bind_address() -> SocketAddr {
+    "127.0.0.1:8787"
+        .parse()
+        .expect("the default bind address is valid")
+}
+
+fn default_database_url() -> String {
+    "postgres://zed@%2Frun%2Fpostgresql/zed".to_owned()
+}
+
+fn default_log_level() -> String {
+    "zed_local_cloud=info,sqlx=warn".to_owned()
+}
+
+fn default_oidc_scopes() -> Vec<String> {
+    vec!["profile".to_owned(), "email".to_owned()]
+}
+
+fn default_admin_claim() -> String {
+    "roles".to_owned()
+}
+
+fn default_admin_value() -> String {
+    "admin".to_owned()
 }
 
 #[cfg(test)]
@@ -149,28 +164,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_toml_secrets() {
-        let secrets: Secrets = toml::from_str(
+    fn parses_the_toml_config_shape() {
+        let config: ConfigFile = toml::from_str(
             r#"
-                DATABASE_URL = "postgres://localhost/zed"
-                ZED_CLOUD_INTERNAL_API_KEY = "secret"
+                internal_api_key_file = "/run/zed/internal-api-key"
+
+                [oidc]
+                issuer_url = "https://auth.example.com"
+                client_id = "zed-local"
+                client_secret_file = "/run/credentials/zed-local-cloud.service/oidc-client-secret"
+                redirect_url = "https://zed.example.com/auth/oidc/callback"
+                scopes = ["profile", "email", "groups"]
+                admin_claim = "groups"
+                admin_value = "zed-admin"
             "#,
         )
-        .expect("valid secrets");
+        .expect("valid config");
 
-        assert_eq!(
-            secrets.database_url.as_deref(),
-            Some("postgres://localhost/zed")
-        );
-        assert_eq!(secrets.internal_api_key.as_deref(), Some("secret"));
+        assert_eq!(config.bind_address, default_bind_address());
+        assert_eq!(config.oidc.client_id, "zed-local");
+        assert_eq!(config.oidc.scopes, ["profile", "email", "groups"]);
+        assert_eq!(config.oidc.admin_claim, "groups");
     }
 
     #[test]
-    fn replacing_a_url_path_does_not_keep_the_base_path() {
-        let base = Url::parse("https://example.com/base").expect("valid test URL");
+    fn rejects_unknown_config_keys() {
+        let result = toml::from_str::<ConfigFile>(
+            r#"
+                internal_api_key_file = "/run/zed/internal-api-key"
+                unknown = true
+
+                [oidc]
+                issuer_url = "https://auth.example.com"
+                client_id = "zed-local"
+                redirect_url = "https://zed.example.com/auth/oidc/callback"
+            "#,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn preserves_the_exact_oidc_issuer_identifier() {
+        let issuer = "https://auth.example.com";
         assert_eq!(
-            url_with_path(&base, "/client/users/me", Some("a=1")).as_str(),
-            "https://example.com/client/users/me?a=1"
+            checked_url("oidc.issuer_url", issuer.to_owned()).expect("valid issuer"),
+            issuer
         );
     }
 }
