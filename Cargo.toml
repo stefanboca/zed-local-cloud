@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 base64 = "0.23.1"
-openidconnect = "4.0.1"
+openidconnect = { version = "4.0.1", features = ["rustls-tls"] }
 rand = "0.10.2"
 rsa = "0.10.0-rc.18"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -39,3 +39,6 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"
 uuid = "1.24.0"
+
+# add the native roots feature to reqwest pulled in by openidconnect
+reqwest = { version = "*", features = ["rustls-tls-native-roots"] }
