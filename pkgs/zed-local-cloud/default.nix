@@ -21,6 +21,7 @@ in
     };
 
     cargoLock.lockFile = ../../Cargo.lock;
+    cargoBuildFlags = ["--bin=zed-local-cloud"];
 
     nativeBuildInputs = [pkg-config];
     buildInputs = [openssl];

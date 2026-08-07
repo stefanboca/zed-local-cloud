@@ -21,7 +21,6 @@ use topcoat::{
         query_params, route,
     },
     session,
-    view::view,
 };
 use url::Url;
 
@@ -29,6 +28,7 @@ use crate::{
     app::AppState,
     oidc::{self, OidcClaims},
     store::{self, OidcProfile},
+    ui,
 };
 
 const LOGIN_LIFETIME: Duration = Duration::from_secs(10 * 60);
@@ -85,33 +85,7 @@ async fn native_app_sign_in(cx: &Cx) -> Result {
     .await
     .map_err(|error| internal("failed to save the login session", error))?;
 
-    view! {
-        <!DOCTYPE html>
-        <html lang="en">
-            <head>
-                <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1">
-                <title>"Sign in to Zed"</title>
-                <style>
-                    r#":root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-                    body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: #18181b; color: #fafafa; }
-                    main { width: min(28rem, calc(100% - 3rem)); padding: 2rem; border: 1px solid #3f3f46; border-radius: 0.75rem; background: #27272a; }
-                    h1 { margin-top: 0; font-size: 1.5rem; }
-                    p { color: #d4d4d8; line-height: 1.5; }
-                    button { width: 100%; margin-top: 1rem; padding: 0.8rem 1rem; border: 0; border-radius: 0.5rem; background: #7c3aed; color: white; font: inherit; font-weight: 650; cursor: pointer; }
-                    button:hover { background: #6d28d9; }"#
-                </style>
-            </head>
-            <body>
-                <main>
-                    <h1>"Sign in to Zed"</h1>
-                    <form method="post" action="/auth/oidc/start">
-                        <button type="submit">"Continue with OpenID Connect"</button>
-                    </form>
-                </main>
-            </body>
-        </html>
-    }
+    ui::sign_in(cx, false).await
 }
 
 #[route(POST "/auth/oidc/start")]
@@ -277,23 +251,8 @@ async fn oidc_callback(cx: &Cx) -> Result<SeeOther> {
 }
 
 #[route(GET "/native_app_signin_succeeded")]
-async fn native_app_sign_in_succeeded() -> Result {
-    view! {
-        <!DOCTYPE html>
-        <html lang="en">
-            <head>
-                <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1">
-                <title>"Zed sign-in complete"</title>
-            </head>
-            <body>
-                <main>
-                    <h1>"Sign-in complete"</h1>
-                    <p>"You can close this page and return to Zed."</p>
-                </main>
-            </body>
-        </html>
-    }
+async fn native_app_sign_in_succeeded(cx: &Cx) -> Result {
+    ui::sign_in_succeeded(cx, false).await
 }
 
 fn localized_value<T: Deref<Target = String>>(

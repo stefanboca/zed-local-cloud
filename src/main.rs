@@ -2,15 +2,7 @@ use std::{env, path::PathBuf};
 
 use anyhow::{Context as _, bail};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
-
-use crate::{app::App, config::Config};
-
-mod api;
-mod app;
-mod auth;
-mod config;
-mod oidc;
-mod store;
+use zed_local_cloud::{App, Config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

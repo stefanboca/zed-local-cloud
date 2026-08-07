@@ -32,7 +32,7 @@
       pkgs = nixpkgsFor.${system};
     in {
       default = pkgs.mkShellNoCC {
-        packages = with pkgs; [sqlx-cli];
+        packages = [pkgs.sqlx-cli self.packages.${system}.topcoat-cli];
         nativeBuildInputs = with pkgs; [pkg-config];
         buildInputs = with pkgs; [openssl];
 

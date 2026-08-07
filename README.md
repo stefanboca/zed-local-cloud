@@ -421,6 +421,24 @@ The extension proxy still uses a Zed-operated service. Zed service terms can
 apply to this access. This project is unofficial. Zed does not document this
 configuration as a supported self-hosted service.
 
+## Web UI development
+
+The Nix development shell includes the version-matched Topcoat CLI. Start the
+UI development server:
+
+```sh
+nix develop -c topcoat dev --bin dev
+```
+
+Open `http://127.0.0.1:3000`. The index links to each UI preview. The mock
+sign-in button opens the sign-in-complete preview. This mode does not read a
+configuration file, connect to PostgreSQL, or perform OIDC discovery.
+
+Topcoat rebuilds the Rust application when a source file changes. The `dev`
+binary includes `topcoat::dev::script()`, which reloads the browser after the
+new application is ready. Production routes render the shared pages with this
+development behavior disabled.
+
 ## Tests
 
 Run the Rust tests:
