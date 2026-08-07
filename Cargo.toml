@@ -2,7 +2,6 @@
 name = "zed-local-cloud"
 version = "0.1.0"
 edition = "2024"
-default-run = "zed-local-cloud"
 
 [dependencies]
 anyhow = "1.0.104"
@@ -27,11 +26,13 @@ topcoat = {
   version = "0.5.0",
   default-features = false,
   features = [
+    "asset",
     "cookie",
     "discover",
     "router",
     "serve",
     "session",
+    "tailwind",
     "view",
     "websocket"
   ]
@@ -43,3 +44,6 @@ uuid = "1.24.0"
 
 # add the native roots feature to reqwest pulled in by openidconnect
 reqwest = { version = "*", features = ["rustls-tls-native-roots"] }
+
+[build-dependencies]
+topcoat = { version = "0.5.0", default-features = false, features = ["tailwind"] }

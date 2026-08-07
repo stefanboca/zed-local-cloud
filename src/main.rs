@@ -2,21 +2,28 @@ use std::{env, path::PathBuf};
 
 use anyhow::{Context as _, bail};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
-use zed_local_cloud::{App, Config};
+use zed_local_cloud::{Config, is_topcoat_dev, routes, serve};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = Config::from_file(&config_path()?)?;
+    if is_topcoat_dev() {
+        init_tracing("debug")?;
+        topcoat::start(routes().build())
+            .await
+            .context("UI development server failed")
+    } else {
+        let config = Config::from_file(&config_path()?)?;
+        init_tracing(&config.log_level)?;
+        serve(config).await
+    }
+}
+
+fn init_tracing(log_level: &str) -> anyhow::Result<()> {
     tracing_subscriber::registry()
-        .with(
-            EnvFilter::try_new(&config.log_level)
-                .context("log_level is not a valid tracing filter")?,
-        )
+        .with(EnvFilter::try_new(log_level).context("log_level is not a valid tracing filter")?)
         .with(tracing_subscriber::fmt::layer())
         .try_init()
-        .context("failed to initialize tracing")?;
-
-    App::new(config).await?.serve().await
+        .context("failed to initialize tracing")
 }
 
 fn config_path() -> anyhow::Result<PathBuf> {

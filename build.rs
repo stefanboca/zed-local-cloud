@@ -2,4 +2,11 @@
 fn main() {
     // trigger recompilation when a new migration is added
     println!("cargo:rerun-if-changed=migrations");
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-env-changed=TAILWIND_CLI");
+
+    topcoat::tailwind::BuildConfig::new()
+        .executable_env("TAILWIND_CLI")
+        .render()
+        .expect("failed to build the Tailwind stylesheet");
 }

@@ -43,7 +43,7 @@ The default installation has these components:
 | --- | --- | --- |
 | PostgreSQL | Local socket | Store collaboration and local cloud data |
 | Zed collaboration server | `127.0.0.1:8080` | Provide collaboration RPC |
-| Zed local cloud | `127.0.0.1:8787` | Provide login and cloud API routes |
+| Zed local cloud | `/run/zed-local-cloud/zed-local-cloud.sock` | Provide login and cloud API routes |
 | Caddy | Public HTTPS address | Route public requests |
 | OIDC provider | External or local address | Authenticate users |
 
@@ -275,7 +275,7 @@ the raw client secret. Do not add a key name, quotes, or TOML syntax.
 Create `zed-local-cloud.toml`:
 
 ```toml
-bind_address = "127.0.0.1:8787"
+socket_path = "/run/zed-local-cloud/zed-local-cloud.sock"
 database_url = "postgres://postgres@localhost/zed"
 internal_api_key_file = "/var/lib/zed/internal-api-key"
 log_level = "zed_local_cloud=info,sqlx=warn"
@@ -371,7 +371,7 @@ service does not read its configuration from environment variables.
 
 | TOML key | Default | Function |
 | --- | --- | --- |
-| `bind_address` | `127.0.0.1:8787` | Set the local cloud listen address |
+| `socket_path` | `/run/zed-local-cloud/zed-local-cloud.sock` | Set the local cloud Unix socket path |
 | `database_url` | Local `zed` socket URL | Set the shared PostgreSQL URL |
 | `internal_api_key_file` | Required | Set the path to the raw internal API key |
 | `log_level` | `zed_local_cloud=info,sqlx=warn` | Set the tracing filter |
@@ -423,21 +423,23 @@ configuration as a supported self-hosted service.
 
 ## Web UI development
 
-The Nix development shell includes the version-matched Topcoat CLI. Start the
-UI development server:
+The Nix development shell includes the version-matched Topcoat CLI and the
+Tailwind CSS CLI. Topcoat builds the stylesheet from the utility classes in
+the Rust views. Start the UI development server:
 
 ```sh
-nix develop -c topcoat dev --bin dev
+nix develop -c topcoat dev
 ```
 
 Open `http://127.0.0.1:3000`. The index links to each UI preview. The mock
 sign-in button opens the sign-in-complete preview. This mode does not read a
-configuration file, connect to PostgreSQL, or perform OIDC discovery.
+configuration file, connect to PostgreSQL, or perform OIDC discovery. The
+application selects this mode when `topcoat dev` sets `TOPCOAT_DEV_URL`.
 
-Topcoat rebuilds the Rust application when a source file changes. The `dev`
-binary includes `topcoat::dev::script()`, which reloads the browser after the
-new application is ready. Production routes render the shared pages with this
-development behavior disabled.
+Topcoat rebuilds the Rust application and the Tailwind stylesheet when a
+source file changes. The shared layout includes `topcoat::dev::script()`,
+which reloads the browser after the new application is ready and renders
+nothing outside `topcoat dev`.
 
 ## Tests
 

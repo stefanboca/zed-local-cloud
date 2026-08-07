@@ -1,14 +1,10 @@
-use std::{
-    ops::Deref,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::ops::Deref;
 
 use anyhow::Context as _;
 use base64::{Engine as _, prelude::BASE64_URL_SAFE};
 use openidconnect::{
-    AccessTokenHash, AuthenticationFlow, AuthorizationCode, CsrfToken, Nonce, OAuth2TokenResponse,
-    PkceCodeChallenge, PkceCodeVerifier, Scope, TokenResponse as _,
-    core::{CoreGenderClaim, CoreResponseType},
+    AccessTokenHash, AuthorizationCode, Nonce, OAuth2TokenResponse, PkceCodeVerifier,
+    TokenResponse as _, core::CoreGenderClaim,
 };
 use rand::RngExt as _;
 use rsa::{Oaep, RsaPublicKey, pkcs1::DecodeRsaPublicKey};
@@ -17,7 +13,7 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{
-        error::{SeeOther, bad_request, internal_server_error, see_other},
+        error::{SeeOther, bad_request, internal_server_error, not_found, see_other},
         query_params, route,
     },
     session,
@@ -28,17 +24,9 @@ use crate::{
     app::AppState,
     oidc::{self, OidcClaims},
     store::{self, OidcProfile},
-    ui,
 };
 
-const LOGIN_LIFETIME: Duration = Duration::from_secs(10 * 60);
-
-#[query_params(error = bad_request)]
-struct NativeAppSignInQuery {
-    native_app_port: u16,
-    native_app_public_key: String,
-    system_id: Option<String>,
-}
+use super::super::super::is_topcoat_dev;
 
 #[query_params(error = bad_request)]
 struct OidcCallbackQuery {
@@ -48,80 +36,12 @@ struct OidcCallbackQuery {
     error_description: Option<String>,
 }
 
-#[route(GET "/native_app_signin")]
-async fn native_app_sign_in(cx: &Cx) -> Result {
-    let state = app_context::<AppState>(cx);
-    let query = query_params::<NativeAppSignInQuery>(cx)?;
-    let _ = &query.system_id;
-    if query.native_app_port == 0 {
-        return Err(bad_request("native_app_port must be greater than zero").into());
-    }
-    decode_public_key(&query.native_app_public_key)
-        .map_err(|error| bad_request(format!("native_app_public_key is invalid: {error}")))?;
-
-    if let Some(old_hash) = session::token_hash(cx).await? {
-        store::delete_login_session(&state.database, &*old_hash)
-            .await
-            .map_err(|error| internal("failed to delete an old login session", error))?;
-    }
-    let login_session = session::start(cx).await?;
-    let expires_at_epoch = SystemTime::now()
-        .checked_add(LOGIN_LIFETIME)
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
-        .ok_or_else(|| {
-            internal(
-                "failed to calculate login session expiry",
-                anyhow::anyhow!("system clock is out of range"),
-            )
-        })?;
-    store::create_login_session(
-        &state.database,
-        &*login_session.token_hash,
-        query.native_app_port,
-        &query.native_app_public_key,
-        expires_at_epoch,
-    )
-    .await
-    .map_err(|error| internal("failed to save the login session", error))?;
-
-    ui::sign_in(cx, false).await
-}
-
-#[route(POST "/auth/oidc/start")]
-async fn start_oidc(cx: &Cx) -> Result<SeeOther> {
-    let state = app_context::<AppState>(cx);
-    let token_hash = session::token_hash(cx)
-        .await?
-        .ok_or_else(|| bad_request("the login session is missing"))?;
-    let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
-    let mut request = state.oidc.client.authorize_url(
-        AuthenticationFlow::<CoreResponseType>::AuthorizationCode,
-        CsrfToken::new_random,
-        Nonce::new_random,
-    );
-    for scope in &state.config.oidc_scopes {
-        request = request.add_scope(Scope::new(scope.clone()));
-    }
-    let (authorization_url, csrf_state, nonce) = request.set_pkce_challenge(pkce_challenge).url();
-    let stored = store::start_oidc_login(
-        &state.database,
-        &*token_hash,
-        &Sha256::digest(csrf_state.secret().as_bytes()),
-        nonce.secret(),
-        pkce_verifier.secret(),
-    )
-    .await
-    .map_err(|error| internal("failed to update the login session", error))?;
-    if !stored {
-        return Err(bad_request("the login session expired").into());
+#[route(GET)]
+async fn callback(cx: &Cx) -> Result<SeeOther> {
+    if is_topcoat_dev() {
+        return Err(not_found().into());
     }
 
-    Ok(see_other(authorization_url.as_str()))
-}
-
-#[route(GET "/auth/oidc/callback")]
-async fn oidc_callback(cx: &Cx) -> Result<SeeOther> {
     let state = app_context::<AppState>(cx);
     let query = query_params::<OidcCallbackQuery>(cx)?;
     if let Some(error) = &query.error {
@@ -248,11 +168,6 @@ async fn oidc_callback(cx: &Cx) -> Result<SeeOther> {
         .append_pair("user_id", &user_id.to_string())
         .append_pair("access_token", &encrypted_access_token);
     Ok(see_other(callback.as_str()))
-}
-
-#[route(GET "/native_app_signin_succeeded")]
-async fn native_app_sign_in_succeeded(cx: &Cx) -> Result {
-    ui::sign_in_succeeded(cx, false).await
 }
 
 fn localized_value<T: Deref<Target = String>>(

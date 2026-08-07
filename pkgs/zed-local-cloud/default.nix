@@ -3,6 +3,8 @@
   openssl,
   pkg-config,
   rustPlatform,
+  tailwindcss_4,
+  topcoat-cli,
 }: let
   inherit (lib.fileset) fileFilter toSource unions;
   inherit (lib.strings) hasPrefix;
@@ -21,10 +23,18 @@ in
     };
 
     cargoLock.lockFile = ../../Cargo.lock;
-    cargoBuildFlags = ["--bin=zed-local-cloud"];
-
-    nativeBuildInputs = [pkg-config];
+    nativeBuildInputs = [pkg-config tailwindcss_4 topcoat-cli];
     buildInputs = [openssl];
+    TAILWIND_CLI = lib.getExe tailwindcss_4;
+
+    postBuild = ''
+      topcoat asset bundle --release --bin zed-local-cloud --out target/assets
+    '';
+
+    postInstall = ''
+      mkdir -p $out/bin/assets
+      cp -r target/assets/. $out/bin/assets/
+    '';
 
     meta = {
       description = "Local cloud and OIDC service for Zed collab";

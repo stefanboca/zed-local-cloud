@@ -92,6 +92,13 @@
       assert machine.succeed(
           "stat --format='%U:%G %a' /var/lib/zed/internal-api-key"
       ).strip() == "zed:zed 600"
+      assert machine.succeed(
+          "stat --format='%U:%G %a' /run/zed-local-cloud"
+      ).strip() == "zed:zed 750"
+      assert machine.succeed(
+          "stat --format='%U:%G %a' /run/zed-local-cloud/zed-local-cloud.sock"
+      ).strip() == "zed:zed 770"
+      assert "zed" in machine.succeed("id --name --groups caddy").split()
 
       key = machine.succeed("cat /var/lib/zed/internal-api-key")
       assert len(base64.b64decode(key, validate=True)) == 128
@@ -117,6 +124,9 @@
       assert auth_command[-2] == "--config", auth_command
       auth_config_text = machine.succeed(f"cat {auth_command[-1]}")
       auth_config = tomllib.loads(auth_config_text)
+      assert auth_config["socket_path"] == (
+          "/run/zed-local-cloud/zed-local-cloud.sock"
+      )
       assert auth_config["database_url"] == (
           "postgres://zed@%2Frun%2Fpostgresql/zed"
       )
@@ -190,6 +200,11 @@
           ).strip()
 
       assert response("/healthz") == "204"
+      assert machine.succeed(
+          "curl --silent --show-error --unix-socket "
+          "/run/zed-local-cloud/zed-local-cloud.sock "
+          "--output /dev/null --write-out='%{http_code}' http://localhost/healthz"
+      ).strip() == "204"
       assert response("/rpc") == "307 http://localhost/actual_rpc"
       assert location("/rpc") == "http://localhost/actual_rpc"
       rpc_location_with_port = machine.succeed(
