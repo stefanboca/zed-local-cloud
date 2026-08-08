@@ -1,5 +1,6 @@
 use std::{
     fs,
+    net::SocketAddr,
     path::{Path, PathBuf},
 };
 
@@ -9,14 +10,14 @@ use url::Url;
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    pub socket_path: PathBuf,
+    pub bind_address: SocketAddr,
+    pub base_url: String,
     pub database_url: String,
     pub internal_api_key: String,
     pub log_level: String,
     pub oidc_issuer_url: String,
     pub oidc_client_id: String,
     pub oidc_client_secret: Option<String>,
-    pub oidc_redirect_url: String,
     pub oidc_scopes: Vec<String>,
     pub oidc_admin_claim: String,
     pub oidc_admin_value: String,
@@ -35,8 +36,9 @@ impl Config {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigFile {
-    #[serde(default = "default_socket_path")]
-    socket_path: PathBuf,
+    #[serde(default = "default_bind_address")]
+    bind_address: SocketAddr,
+    base_url: String,
     #[serde(default = "default_database_url")]
     database_url: String,
     internal_api_key_file: PathBuf,
@@ -48,8 +50,8 @@ struct ConfigFile {
 impl ConfigFile {
     fn load(self) -> anyhow::Result<Config> {
         ensure!(
-            self.socket_path.is_absolute(),
-            "socket_path must be an absolute path"
+            !self.base_url.trim().is_empty(),
+            "base_url must not be empty"
         );
         ensure!(
             !self.database_url.trim().is_empty(),
@@ -88,14 +90,14 @@ impl ConfigFile {
             .collect();
 
         Ok(Config {
-            socket_path: self.socket_path,
+            bind_address: self.bind_address,
+            base_url: self.base_url,
             database_url: self.database_url,
             internal_api_key,
             log_level: self.log_level,
             oidc_issuer_url: checked_url("oidc.issuer_url", self.oidc.issuer_url)?,
             oidc_client_id: self.oidc.client_id,
             oidc_client_secret,
-            oidc_redirect_url: checked_url("oidc.redirect_url", self.oidc.redirect_url)?,
             oidc_scopes,
             oidc_admin_claim: self.oidc.admin_claim,
             oidc_admin_value: self.oidc.admin_value,
@@ -109,7 +111,6 @@ struct OidcConfigFile {
     issuer_url: String,
     client_id: String,
     client_secret_file: Option<PathBuf>,
-    redirect_url: String,
     #[serde(default = "default_oidc_scopes")]
     scopes: Vec<String>,
     #[serde(default = "default_admin_claim")]
@@ -127,17 +128,24 @@ fn read_secret(path: &Path, name: &str) -> anyhow::Result<String> {
 }
 
 fn checked_url(name: &str, value: String) -> anyhow::Result<String> {
+    parsed_url(name, value.clone())?;
+    Ok(value)
+}
+
+fn parsed_url(name: &str, value: String) -> anyhow::Result<Url> {
     let url = Url::parse(&value).with_context(|| format!("{name} is not a valid URL"))?;
     ensure!(
         matches!(url.scheme(), "http" | "https"),
         "{name} must use http or https"
     );
     ensure!(url.host_str().is_some(), "{name} must include a host");
-    Ok(value)
+    Ok(url)
 }
 
-fn default_socket_path() -> PathBuf {
-    "/run/zed-local-cloud/zed-local-cloud.sock".into()
+fn default_bind_address() -> SocketAddr {
+    "127.0.0.1:8787"
+        .parse()
+        .expect("the default bind address is valid")
 }
 
 fn default_database_url() -> String {
@@ -168,13 +176,13 @@ mod tests {
     fn parses_the_toml_config_shape() {
         let config: ConfigFile = toml::from_str(
             r#"
+                base_url = "zed.example.com"
                 internal_api_key_file = "/run/zed/internal-api-key"
 
                 [oidc]
                 issuer_url = "https://auth.example.com"
                 client_id = "zed-local"
                 client_secret_file = "/run/credentials/zed-local-cloud.service/oidc-client-secret"
-                redirect_url = "https://zed.example.com/auth/oidc/callback"
                 scopes = ["profile", "email", "groups"]
                 admin_claim = "groups"
                 admin_value = "zed-admin"
@@ -182,7 +190,8 @@ mod tests {
         )
         .expect("valid config");
 
-        assert_eq!(config.socket_path, default_socket_path());
+        assert_eq!(config.bind_address, default_bind_address());
+        assert_eq!(config.base_url, "zed.example.com");
         assert_eq!(config.oidc.client_id, "zed-local");
         assert_eq!(config.oidc.scopes, ["profile", "email", "groups"]);
         assert_eq!(config.oidc.admin_claim, "groups");
@@ -192,13 +201,30 @@ mod tests {
     fn rejects_unknown_config_keys() {
         let result = toml::from_str::<ConfigFile>(
             r#"
+                base_url = "zed.example.com"
                 internal_api_key_file = "/run/zed/internal-api-key"
                 unknown = true
 
                 [oidc]
                 issuer_url = "https://auth.example.com"
                 client_id = "zed-local"
-                redirect_url = "https://zed.example.com/auth/oidc/callback"
+            "#,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_the_removed_oidc_redirect_url() {
+        let result = toml::from_str::<ConfigFile>(
+            r#"
+                base_url = "zed.example.com"
+                internal_api_key_file = "/run/zed/internal-api-key"
+
+                [oidc]
+                issuer_url = "https://auth.example.com"
+                client_id = "zed-local"
+                redirect_url = "https://other.example.com/auth/oidc/callback"
             "#,
         );
 

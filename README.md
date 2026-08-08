@@ -43,7 +43,7 @@ The default installation has these components:
 | --- | --- | --- |
 | PostgreSQL | Local socket | Store collaboration and local cloud data |
 | Zed collaboration server | `127.0.0.1:8080` | Provide collaboration RPC |
-| Zed local cloud | `/run/zed-local-cloud/zed-local-cloud.sock` | Provide login and cloud API routes |
+| Zed local cloud | `127.0.0.1:8787` | Provide login and cloud API routes |
 | Caddy | Public HTTPS address | Route public requests |
 | OIDC provider | External or local address | Authenticate users |
 
@@ -134,7 +134,6 @@ Use this example as a start:
               issuerUrl = "https://auth.example.com";
               clientId = "zed-local";
               clientSecretFile = "/run/secrets/zed-oidc-client-secret";
-              redirectUrl = "https://zed.example.com/auth/oidc/callback";
               scopes = ["profile" "email" "groups"];
               adminClaim = "groups";
               adminValue = "zed-admin";
@@ -148,6 +147,10 @@ Use this example as a start:
   };
 }
 ```
+
+The module copies `virtualHost` to the local cloud `base_url`. The local cloud
+sets the scheme to `https` and adds `/auth/oidc/callback`. Register that
+derived URL with the OIDC provider.
 
 Systemd loads `clientSecretFile` as a credential. The local cloud reads the
 raw secret from its private credential directory. The TOML configuration
@@ -230,7 +233,6 @@ services.zed-local-cloud.oidc = {
   issuerUrl = "https://auth.example.com";
   clientId = "zed-local";
   clientSecretFile = "/run/secrets/zed-oidc-client-secret";
-  redirectUrl = "https://zed.example.com/auth/oidc/callback";
   scopes = ["profile" "email" "groups"];
   adminClaim = "groups";
   adminValue = "zed-admin";
@@ -275,7 +277,8 @@ the raw client secret. Do not add a key name, quotes, or TOML syntax.
 Create `zed-local-cloud.toml`:
 
 ```toml
-socket_path = "/run/zed-local-cloud/zed-local-cloud.sock"
+base_url = "zed.example.com"
+bind_address = "127.0.0.1:8787"
 database_url = "postgres://postgres@localhost/zed"
 internal_api_key_file = "/var/lib/zed/internal-api-key"
 log_level = "zed_local_cloud=info,sqlx=warn"
@@ -284,11 +287,13 @@ log_level = "zed_local_cloud=info,sqlx=warn"
 issuer_url = "https://auth.example.com"
 client_id = "zed-local"
 client_secret_file = "/run/secrets/zed-oidc-client-secret"
-redirect_url = "https://zed.example.com/auth/oidc/callback"
 scopes = ["profile", "email", "groups"]
 admin_claim = "groups"
 admin_value = "zed-admin"
 ```
+
+The local cloud constructs the OIDC redirect URL from `base_url`. It sets the
+scheme to `https` and sets the path to `/auth/oidc/callback`.
 
 Start the collaboration server from the compatible Zed source tree:
 
@@ -371,14 +376,14 @@ service does not read its configuration from environment variables.
 
 | TOML key | Default | Function |
 | --- | --- | --- |
-| `socket_path` | `/run/zed-local-cloud/zed-local-cloud.sock` | Set the local cloud Unix socket path |
+| `base_url` | Required | Set the public local cloud authority used for the HTTPS OIDC callback |
+| `bind_address` | `127.0.0.1:8787` | Set the local cloud TCP listen address |
 | `database_url` | Local `zed` socket URL | Set the shared PostgreSQL URL |
 | `internal_api_key_file` | Required | Set the path to the raw internal API key |
 | `log_level` | `zed_local_cloud=info,sqlx=warn` | Set the tracing filter |
 | `oidc.issuer_url` | Required | Set the OIDC issuer URL |
 | `oidc.client_id` | Required | Set the OIDC client identifier |
 | `oidc.client_secret_file` | Empty | Set the path to the raw OIDC client secret |
-| `oidc.redirect_url` | Required | Set the registered callback URL |
 | `oidc.scopes` | `profile`, `email` | Set the additional OIDC scopes |
 | `oidc.admin_claim` | `roles` | Set the administrator claim path |
 | `oidc.admin_value` | `admin` | Set the administrator claim value |

@@ -30,7 +30,7 @@ pub struct AppState {
 }
 
 pub async fn serve(config: Config) -> anyhow::Result<()> {
-    let socket_path = config.socket_path.clone();
+    let bind_address = config.bind_address;
     let database = PgPoolOptions::new()
         .max_connections(10)
         .connect(&config.database_url)
@@ -59,9 +59,10 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         .app_context(state)
         .build();
 
-    let listener = tokio::net::UnixListener::bind(&socket_path)
-        .with_context(|| format!("failed to bind {}", socket_path.display()))?;
-    tracing::info!(socket_path = %socket_path.display(), "Zed local cloud listening");
+    let listener = tokio::net::TcpListener::bind(bind_address)
+        .await
+        .with_context(|| format!("failed to bind {bind_address}"))?;
+    tracing::info!(%bind_address, "Zed local cloud listening");
     topcoat::serve(listener, router)
         .await
         .context("HTTP server failed")

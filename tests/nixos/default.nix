@@ -13,7 +13,7 @@
       services.zed-local-cloud = {
         enable = true;
         package = zedLocalCloudPackage;
-        virtualHost = "http://localhost";
+        virtualHost = "localhost";
         upstreamApiUrl = "http://127.0.0.1:18081";
         collab.package = zedCollabPackage;
         oidc = {
@@ -22,7 +22,6 @@
           issuerUrl = "http://127.0.0.1:18080";
           clientId = "zed-local";
           clientSecretFile = toString (pkgs.writeText "test-oidc-client-secret" "test-client-secret");
-          redirectUrl = "http://localhost/auth/oidc/callback";
         };
       };
 
@@ -62,7 +61,8 @@
       ]:
           machine.wait_for_unit(unit)
 
-      machine.wait_for_open_port(80)
+      machine.wait_for_open_port(443)
+      machine.wait_for_open_port(8787)
 
       failed_units = machine.succeed(
           "systemctl list-units --state=failed --no-legend --plain"
@@ -92,14 +92,6 @@
       assert machine.succeed(
           "stat --format='%U:%G %a' /var/lib/zed/internal-api-key"
       ).strip() == "zed:zed 600"
-      assert machine.succeed(
-          "stat --format='%U:%G %a' /run/zed-local-cloud"
-      ).strip() == "zed:zed 750"
-      assert machine.succeed(
-          "stat --format='%U:%G %a' /run/zed-local-cloud/zed-local-cloud.sock"
-      ).strip() == "zed:zed 770"
-      assert "zed" in machine.succeed("id --name --groups caddy").split()
-
       key = machine.succeed("cat /var/lib/zed/internal-api-key")
       assert len(base64.b64decode(key, validate=True)) == 128
 
@@ -124,9 +116,8 @@
       assert auth_command[-2] == "--config", auth_command
       auth_config_text = machine.succeed(f"cat {auth_command[-1]}")
       auth_config = tomllib.loads(auth_config_text)
-      assert auth_config["socket_path"] == (
-          "/run/zed-local-cloud/zed-local-cloud.sock"
-      )
+      assert auth_config["base_url"] == "localhost"
+      assert auth_config["bind_address"] == "127.0.0.1:8787"
       assert auth_config["database_url"] == (
           "postgres://zed@%2Frun%2Fpostgresql/zed"
       )
@@ -136,6 +127,7 @@
       assert auth_config["oidc"]["client_secret_file"] == (
           "/run/credentials/zed-local-cloud.service/oidc-client-secret"
       )
+      assert "redirect_url" not in auth_config["oidc"]
       assert "test-client-secret" not in auth_config_text
       assert machine.succeed(
           "cat /run/credentials/zed-local-cloud.service/oidc-client-secret"
@@ -188,37 +180,36 @@
 
       def response(path):
           return machine.succeed(
-              "curl --silent --show-error --output /dev/null "
+              "curl --insecure --silent --show-error --output /dev/null "
               f"--write-out='%{{http_code}} %{{redirect_url}}' "
-              f"http://localhost{path}"
+              f"https://localhost{path}"
           ).strip()
 
       def location(path):
           return machine.succeed(
-              "curl --silent --show-error --output /dev/null "
-              f"--write-out='%header{{location}}' http://localhost{path}"
+              "curl --insecure --silent --show-error --output /dev/null "
+              f"--write-out='%header{{location}}' https://localhost{path}"
           ).strip()
 
       assert response("/healthz") == "204"
       assert machine.succeed(
-          "curl --silent --show-error --unix-socket "
-          "/run/zed-local-cloud/zed-local-cloud.sock "
-          "--output /dev/null --write-out='%{http_code}' http://localhost/healthz"
-      ).strip() == "204"
-      assert response("/rpc") == "307 http://localhost/actual_rpc"
-      assert location("/rpc") == "http://localhost/actual_rpc"
-      rpc_location_with_port = machine.succeed(
           "curl --silent --show-error --output /dev/null "
+          "--write-out='%{http_code}' http://127.0.0.1:8787/healthz"
+      ).strip() == "204"
+      assert response("/rpc") == "307 https://localhost/actual_rpc"
+      assert location("/rpc") == "https://localhost/actual_rpc"
+      rpc_location_with_port = machine.succeed(
+          "curl --insecure --silent --show-error --output /dev/null "
           "--header='Host: localhost:18787' "
-          "--write-out='%header{location}' http://localhost/rpc"
+          "--write-out='%header{location}' https://localhost/rpc"
       ).strip()
-      assert rpc_location_with_port == "http://localhost:18787/actual_rpc"
+      assert rpc_location_with_port == "https://localhost:18787/actual_rpc"
       assert response("/actual_rpc") == "401"
       extension_list = json.loads(machine.succeed(
-          "curl --silent --show-error "
+          "curl --insecure --silent --show-error "
           "--header='Authorization: Bearer local-only' "
           "--header='Cookie: local-session=secret' "
-          "'http://localhost/extensions?filter=rust'"
+          "'https://localhost/extensions?filter=rust'"
       ))
       assert extension_list == {
           "authorization": None,
@@ -229,8 +220,8 @@
           "source": "fake-extension-upstream",
       }, extension_list
       extension_download = json.loads(machine.succeed(
-          "curl --silent --show-error "
-          "'http://localhost/extensions/test.extension/download?version=1'"
+          "curl --insecure --silent --show-error "
+          "'https://localhost/extensions/test.extension/download?version=1'"
       ))
       assert extension_download["path"] == (
           "/extensions/test.extension/download"
@@ -243,16 +234,16 @@
       ), extension_download
       assert response("/client/users/me") == "401"
       assert machine.succeed(
-          "curl --silent --show-error --output /dev/null "
+          "curl --insecure --silent --show-error --output /dev/null "
           "--request POST "
           "--header='Content-Type: application/json' "
           "--data='{\"channel_id\":1,\"query\":\"local\",\"limit\":10}' "
           "--write-out='%{http_code}' "
-          "http://localhost/internal/channel_members/fuzzy_search"
+          "https://localhost/internal/channel_members/fuzzy_search"
       ).strip() == "401"
       assert response("/models") == "200"
       models = machine.succeed(
-          "curl --silent --show-error http://localhost/models"
+          "curl --insecure --silent --show-error https://localhost/models"
       )
       assert json.loads(models) == {
           "models": [],
@@ -276,24 +267,24 @@
 
       def oidc_login():
           signin_url = (
-              "http://localhost/native_app_signin"
+              "https://localhost/native_app_signin"
               "?native_app_port=49152"
               f"&native_app_public_key={quote(native_public_key)}"
           )
           login_page = machine.succeed(
-              "curl --silent --show-error "
+              "curl --insecure --silent --show-error "
               "--cookie-jar /tmp/login-cookies "
               f"{shlex.quote(signin_url)}"
           )
           assert "Continue with OpenID Connect" in login_page
 
           authorization_url = machine.succeed(
-              "curl --silent --show-error --output /dev/null "
+              "curl --insecure --silent --show-error --output /dev/null "
               "--request POST "
               "--cookie /tmp/login-cookies "
               "--cookie-jar /tmp/login-cookies "
               "--write-out='%header{location}' "
-              "http://localhost/auth/oidc/start"
+              "https://localhost/auth/oidc/start"
           ).strip()
           assert authorization_url.startswith(
               "http://127.0.0.1:18080/authorize?"
@@ -305,11 +296,11 @@
               f"{shlex.quote(authorization_url)}"
           ).strip()
           assert callback_url.startswith(
-              "http://localhost/auth/oidc/callback?"
+              "https://localhost/auth/oidc/callback?"
           ), callback_url
 
           native_callback = machine.succeed(
-              "curl --silent --show-error --output /dev/null "
+              "curl --insecure --silent --show-error --output /dev/null "
               "--cookie /tmp/login-cookies "
               "--cookie-jar /tmp/login-cookies "
               "--write-out='%header{location}' "

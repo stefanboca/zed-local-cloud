@@ -13,6 +13,7 @@ use openidconnect::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use url::{ParseError, Url};
 
 use crate::config::Config;
 
@@ -59,6 +60,7 @@ pub struct Oidc {
 
 impl Oidc {
     pub async fn discover(config: &Config) -> anyhow::Result<Self> {
+        let callback_url = oidc_callback_url(&config.base_url)?;
         let http_client = openidconnect::reqwest::ClientBuilder::new()
             .redirect(openidconnect::reqwest::redirect::Policy::none())
             .build()
@@ -78,7 +80,7 @@ impl Oidc {
             client_secret,
         )
         .set_redirect_uri(
-            RedirectUrl::new(config.oidc_redirect_url.clone())
+            RedirectUrl::new(callback_url.to_string())
                 .context("the OIDC redirect URL is invalid")?,
         );
 
@@ -87,6 +89,23 @@ impl Oidc {
             http_client,
         })
     }
+}
+
+fn oidc_callback_url(base_url: &str) -> anyhow::Result<Url> {
+    let mut callback_url = match Url::parse(base_url) {
+        Ok(url) if url.has_host() => url,
+        Ok(_) | Err(ParseError::RelativeUrlWithoutBase) => {
+            Url::parse(&format!("https://{base_url}")).context("the base URL is invalid")?
+        }
+        Err(error) => return Err(error).context("the base URL is invalid"),
+    };
+    callback_url
+        .set_scheme("https")
+        .map_err(|()| anyhow::anyhow!("the base URL cannot use the https scheme"))?;
+    callback_url.set_path("/auth/oidc/callback");
+    callback_url.set_query(None);
+    callback_url.set_fragment(None);
+    Ok(callback_url)
 }
 
 pub fn claim_has_value(claims: &OidcClaims, path: &str, expected: &str) -> bool {
@@ -110,6 +129,28 @@ pub fn claim_value<'a>(claims: &'a OidcClaims, path: &str) -> Option<&'a Value> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constructs_an_https_redirect_url_from_the_base_url() {
+        assert_eq!(
+            oidc_callback_url("zed.example.com/old?query=1#fragment")
+                .expect("valid base URL")
+                .as_str(),
+            "https://zed.example.com/auth/oidc/callback"
+        );
+        assert_eq!(
+            oidc_callback_url("http://zed.example.com")
+                .expect("valid base URL")
+                .as_str(),
+            "https://zed.example.com/auth/oidc/callback"
+        );
+        assert_eq!(
+            oidc_callback_url("localhost:8443")
+                .expect("valid base URL")
+                .as_str(),
+            "https://localhost:8443/auth/oidc/callback"
+        );
+    }
 
     #[test]
     fn reads_scalar_array_and_nested_admin_claims() {

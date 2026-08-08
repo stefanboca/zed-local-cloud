@@ -8,15 +8,13 @@
   inherit (lib.meta) getExe;
   inherit (lib.modules) mkIf;
   inherit (lib.options) mkEnableOption mkOption mkPackageOption;
-  inherit (lib.strings) hasPrefix removePrefix;
   inherit (lib.types) bool int listOf nullOr port str;
 
   cfg = config.services.zed-local-cloud;
-  socketDirectory = builtins.dirOf cfg.socketPath;
-  runtimeDirectory = removePrefix "/run/" socketDirectory;
 
   localCloudConfig = (pkgs.formats.toml {}).generate "zed-local-cloud.toml" {
-    socket_path = cfg.socketPath;
+    base_url = cfg.virtualHost;
+    bind_address = "127.0.0.1:${toString cfg.port}";
     database_url = cfg.database.url;
     internal_api_key_file = "/var/lib/zed/internal-api-key";
     log_level = cfg.logLevel;
@@ -26,7 +24,6 @@
         admin_value = cfg.oidc.adminValue;
         client_id = cfg.oidc.clientId;
         issuer_url = cfg.oidc.issuerUrl;
-        redirect_url = cfg.oidc.redirectUrl;
         scopes = cfg.oidc.scopes;
       }
       // lib.optionalAttrs (cfg.oidc.clientSecretFile != null) {
@@ -41,7 +38,7 @@
     LOG_JSON = cfg.collab.logJson;
     RUST_LOG = cfg.collab.logLevel;
     ZED_CLIENT_CHECKSUM_SEED = cfg.collab.clientChecksumSeed;
-    ZED_CLOUD_URL = "http://${cfg.host}:${toString cfg.port}";
+    ZED_CLOUD_URL = "http://127.0.0.1:${toString cfg.port}";
     ZED_ENVIRONMENT = "production";
   };
 
@@ -84,28 +81,16 @@ in {
       description = "Group under which the local cloud and collab server run.";
     };
 
-    host = mkOption {
-      type = str;
-      default = "127.0.0.1";
-      description = "Loopback address on which Caddy exposes the local cloud to collab.";
-    };
-
     port = mkOption {
       type = port;
       default = 8787;
-      description = "Loopback port on which Caddy exposes the local cloud to collab.";
-    };
-
-    socketPath = mkOption {
-      type = str;
-      default = "/run/zed-local-cloud/zed-local-cloud.sock";
-      description = "Unix socket on which the local cloud listens. Its parent must be below /run.";
+      description = "Localhost port on which the local cloud listens.";
     };
 
     virtualHost = mkOption {
       type = str;
       example = "zed.example.com";
-      description = "Caddy virtual host serving the public Zed-compatible endpoint.";
+      description = "Public host used as the Caddy virtual host and OIDC callback authority.";
     };
 
     upstreamApiUrl = mkOption {
@@ -132,12 +117,6 @@ in {
         default = null;
         example = "/run/secrets/zed-oidc-client-secret";
         description = "File that contains the OIDC client secret. Use null for a public client.";
-      };
-
-      redirectUrl = mkOption {
-        type = str;
-        example = "https://zed.example.com/auth/oidc/callback";
-        description = "OIDC redirect URL registered with the provider.";
       };
 
       scopes = mkOption {
@@ -227,10 +206,6 @@ in {
         message = "services.zed-local-cloud.collab.databaseMaxConnections must be positive.";
       }
       {
-        assertion = hasPrefix "/run/" cfg.socketPath && runtimeDirectory != "";
-        message = "services.zed-local-cloud.socketPath must be below /run.";
-      }
-      {
         assertion = !cfg.database.createLocally || cfg.database.name == cfg.user;
         message = ''
           services.zed-local-cloud.database.name must equal services.zed-local-cloud.user
@@ -245,8 +220,6 @@ in {
       isSystemUser = true;
       inherit (cfg) group;
     };
-    users.users.caddy.extraGroups = [cfg.group];
-
     services.postgresql = mkIf cfg.database.createLocally {
       enable = true;
       ensureDatabases = [cfg.database.name];
@@ -260,39 +233,32 @@ in {
 
     services.caddy = {
       enable = true;
-      virtualHosts = {
-        ${cfg.virtualHost}.extraConfig = ''
-          route {
-            redir /rpc {http.request.scheme}://{http.request.hostport}/actual_rpc 307
-            handle /actual_rpc {
-              rewrite * /rpc
-              reverse_proxy 127.0.0.1:${toString cfg.collab.port}
-            }
-            @extensions path /extensions /extensions/*
-            handle @extensions {
-              reverse_proxy ${cfg.upstreamApiUrl} {
-                header_up -Authorization
-                header_up -Cookie
-                header_up Host {upstream_hostport}
-              }
-            }
-            handle {
-              reverse_proxy unix/${cfg.socketPath}
+      virtualHosts.${cfg.virtualHost}.extraConfig = ''
+        route {
+          redir /rpc {http.request.scheme}://{http.request.hostport}/actual_rpc 307
+          handle /actual_rpc {
+            rewrite * /rpc
+            reverse_proxy 127.0.0.1:${toString cfg.collab.port}
+          }
+          @extensions path /extensions /extensions/*
+          handle @extensions {
+            reverse_proxy ${cfg.upstreamApiUrl} {
+              header_up -Authorization
+              header_up -Cookie
+              header_up Host {upstream_hostport}
             }
           }
-        '';
-        "http://${cfg.host}:${toString cfg.port}".extraConfig = ''
           handle {
-            reverse_proxy unix/${cfg.socketPath}
+            reverse_proxy 127.0.0.1:${toString cfg.port}
           }
-        '';
-      };
+        }
+      '';
     };
 
     systemd.services = {
       caddy = {
-        wants = ["zed-local-cloud.service"];
-        after = ["zed-local-cloud.service"];
+        wants = ["zed-local-cloud.service" "zed-collab.service"];
+        after = ["zed-local-cloud.service" "zed-collab.service"];
       };
 
       zed-local-cloud = {
@@ -308,11 +274,8 @@ in {
             Group = cfg.group;
             Restart = "on-failure";
             RestartSec = 5;
-            RuntimeDirectory = runtimeDirectory;
-            RuntimeDirectoryMode = "0750";
             StateDirectory = "zed";
             StateDirectoryMode = "0700";
-            UMask = "0007";
             User = cfg.user;
           }
           // lib.optionalAttrs (cfg.oidc.clientSecretFile != null) {
@@ -323,8 +286,8 @@ in {
       zed-collab = {
         description = "Zed collaboration server";
         wantedBy = ["multi-user.target"];
-        requires = ["caddy.service" "zed-local-cloud.service" "zed-setup.service"];
-        after = ["caddy.service" "zed-local-cloud.service" "zed-setup.service"];
+        requires = ["zed-local-cloud.service" "zed-setup.service"];
+        after = ["zed-local-cloud.service" "zed-setup.service"];
 
         preStart = ''
           mkdir -p "$RUNTIME_DIRECTORY/crates/collab"
