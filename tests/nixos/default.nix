@@ -118,6 +118,7 @@
       auth_config = tomllib.loads(auth_config_text)
       assert auth_config["base_url"] == "localhost"
       assert auth_config["bind_address"] == "127.0.0.1:8787"
+      assert "browser_session_lifetime_seconds" not in auth_config
       assert auth_config["database_url"] == (
           "postgres://zed@%2Frun%2Fpostgresql/zed"
       )
@@ -162,6 +163,7 @@
           "20251208000000",
           "20260724000000",
           "20260806000000",
+          "20260807000000",
       ], migrations
 
       environments = machine.succeed(
@@ -265,27 +267,36 @@
           "| base64 -w0 | tr '+/' '-_'"
       ).strip()
 
-      def oidc_login():
+      def oidc_login(automatic):
           signin_url = (
               "https://localhost/native_app_signin"
               "?native_app_port=49152"
               f"&native_app_public_key={quote(native_public_key)}"
           )
-          login_page = machine.succeed(
-              "curl --insecure --silent --show-error "
-              "--cookie-jar /tmp/login-cookies "
-              f"{shlex.quote(signin_url)}"
-          )
-          assert "Continue with OpenID Connect" in login_page
+          if automatic:
+              authorization_url = machine.succeed(
+                  "curl --insecure --silent --show-error --output /dev/null "
+                  "--cookie /tmp/login-cookies "
+                  "--cookie-jar /tmp/login-cookies "
+                  "--write-out='%header{location}' "
+                  f"{shlex.quote(signin_url)}"
+              ).strip()
+          else:
+              login_page = machine.succeed(
+                  "curl --insecure --silent --show-error "
+                  "--cookie-jar /tmp/login-cookies "
+                  f"{shlex.quote(signin_url)}"
+              )
+              assert "Continue with OpenID Connect" in login_page
 
-          authorization_url = machine.succeed(
-              "curl --insecure --silent --show-error --output /dev/null "
-              "--request POST "
-              "--cookie /tmp/login-cookies "
-              "--cookie-jar /tmp/login-cookies "
-              "--write-out='%header{location}' "
-              "https://localhost/auth/oidc/start"
-          ).strip()
+              authorization_url = machine.succeed(
+                  "curl --insecure --silent --show-error --output /dev/null "
+                  "--request POST "
+                  "--cookie /tmp/login-cookies "
+                  "--cookie-jar /tmp/login-cookies "
+                  "--write-out='%header{location}' "
+                  "https://localhost/auth/oidc/start"
+              ).strip()
           assert authorization_url.startswith(
               "http://127.0.0.1:18080/authorize?"
           ), authorization_url
@@ -313,7 +324,7 @@
           assert callback_query["user_id"] == ["1"], callback_query
           assert len(callback_query["access_token"]) == 1, callback_query
 
-      oidc_login()
+      oidc_login(False)
       first_profile = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed "
           "--tuples-only --no-align --field-separator='|' "
@@ -325,7 +336,7 @@
           "t|https://images.example.com/alice-1.png"
       ), first_profile
 
-      oidc_login()
+      oidc_login(True)
       second_profile = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed "
           "--tuples-only --no-align --field-separator='|' "
@@ -340,6 +351,11 @@
           "runuser -u postgres -- psql --dbname=zed "
           "--tuples-only --no-align "
           "--command='SELECT count(*) FROM local_oidc_identities'"
+      ).strip() == "1"
+      assert machine.succeed(
+          "runuser -u postgres -- psql --dbname=zed "
+          "--tuples-only --no-align "
+          "--command='SELECT count(*) FROM local_browser_sessions'"
       ).strip() == "1"
     '';
   };

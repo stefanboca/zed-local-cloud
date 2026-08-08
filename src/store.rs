@@ -1,6 +1,8 @@
+use std::time::SystemTime;
+
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgPool, types::time::OffsetDateTime};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -321,6 +323,68 @@ pub async fn delete_login_session(database: &PgPool, token_hash: &[u8]) -> sqlx:
         .execute(database)
         .await?;
     Ok(())
+}
+
+pub async fn refresh_browser_session(
+    database: &PgPool,
+    token_hash: &[u8],
+    expires_at: SystemTime,
+) -> sqlx::Result<Option<i32>> {
+    let mut transaction = database.begin().await?;
+    sqlx::query("DELETE FROM local_browser_sessions WHERE expires_at <= now()")
+        .execute(&mut *transaction)
+        .await?;
+    let user_id = sqlx::query_scalar(
+        r#"
+        UPDATE local_browser_sessions
+        SET expires_at = $2,
+            updated_at = now()
+        WHERE token_hash = $1
+        RETURNING user_id
+        "#,
+    )
+    .bind(token_hash)
+    .bind(OffsetDateTime::from(expires_at))
+    .fetch_optional(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    Ok(user_id)
+}
+
+pub async fn replace_browser_session(
+    database: &PgPool,
+    old_token_hash: &[u8],
+    new_token_hash: &[u8],
+    user_id: i32,
+    expires_at: SystemTime,
+) -> sqlx::Result<()> {
+    let mut transaction = database.begin().await?;
+    sqlx::query(
+        r#"
+        DELETE FROM local_browser_sessions
+        WHERE token_hash = $1
+           OR expires_at <= now()
+        "#,
+    )
+    .bind(old_token_hash)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO local_browser_sessions (
+            token_hash,
+            user_id,
+            expires_at
+        )
+        VALUES ($1, $2, $3)
+        "#,
+    )
+    .bind(new_token_hash)
+    .bind(user_id)
+    .bind(OffsetDateTime::from(expires_at))
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await
 }
 
 pub async fn start_oidc_login(

@@ -31,6 +31,7 @@ pub struct AppState {
 
 pub async fn serve(config: Config) -> anyhow::Result<()> {
     let bind_address = config.bind_address;
+    let browser_session_lifetime = Duration::from_secs(config.browser_session_lifetime_seconds);
     let database = PgPoolOptions::new()
         .max_connections(10)
         .connect(&config.database_url)
@@ -53,7 +54,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         .cookies()
         .sessions(
             SessionConfig::builder()
-                .lifetime(Duration::from_secs(10 * 60))
+                .lifetime(browser_session_lifetime)
                 .build(),
         )
         .app_context(state)

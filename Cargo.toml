@@ -19,7 +19,7 @@ sha2 = "0.11.0"
 sqlx = {
   version = "0.9.0",
   default-features = false,
-  features = ["macros", "migrate", "postgres", "runtime-tokio", "uuid"]
+  features = ["macros", "migrate", "postgres", "runtime-tokio", "time", "uuid"]
 }
 tokio = {
   version = "1.53.1",

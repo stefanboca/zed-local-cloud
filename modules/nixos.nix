@@ -12,24 +12,29 @@
 
   cfg = config.services.zed-local-cloud;
 
-  localCloudConfig = (pkgs.formats.toml {}).generate "zed-local-cloud.toml" {
-    base_url = cfg.virtualHost;
-    bind_address = "127.0.0.1:${toString cfg.port}";
-    database_url = cfg.database.url;
-    internal_api_key_file = "/var/lib/zed/internal-api-key";
-    log_level = cfg.logLevel;
-    oidc =
-      {
-        admin_claim = cfg.oidc.adminClaim;
-        admin_value = cfg.oidc.adminValue;
-        client_id = cfg.oidc.clientId;
-        issuer_url = cfg.oidc.issuerUrl;
-        scopes = cfg.oidc.scopes;
-      }
-      // lib.optionalAttrs (cfg.oidc.clientSecretFile != null) {
-        client_secret_file = "/run/credentials/zed-local-cloud.service/oidc-client-secret";
-      };
-  };
+  localCloudConfig = (pkgs.formats.toml {}).generate "zed-local-cloud.toml" (
+    {
+      base_url = cfg.virtualHost;
+      bind_address = "127.0.0.1:${toString cfg.port}";
+      database_url = cfg.database.url;
+      internal_api_key_file = "/var/lib/zed/internal-api-key";
+      log_level = cfg.logLevel;
+      oidc =
+        {
+          admin_claim = cfg.oidc.adminClaim;
+          admin_value = cfg.oidc.adminValue;
+          client_id = cfg.oidc.clientId;
+          issuer_url = cfg.oidc.issuerUrl;
+          scopes = cfg.oidc.scopes;
+        }
+        // lib.optionalAttrs (cfg.oidc.clientSecretFile != null) {
+          client_secret_file = "/run/credentials/zed-local-cloud.service/oidc-client-secret";
+        };
+    }
+    // lib.optionalAttrs (cfg.browserSessionLifetimeSeconds != null) {
+      browser_session_lifetime_seconds = cfg.browserSessionLifetimeSeconds;
+    }
+  );
 
   collabEnvironment = (pkgs.formats.toml {}).generate "zed-collab.toml" {
     DATABASE_URL = cfg.database.url;
@@ -91,6 +96,13 @@ in {
       type = str;
       example = "zed.example.com";
       description = "Public host used as the Caddy virtual host and OIDC callback authority.";
+    };
+
+    browserSessionLifetimeSeconds = mkOption {
+      type = nullOr int;
+      default = null;
+      example = 2592000;
+      description = "Browser authentication session lifetime in seconds. A null value uses the local cloud default.";
     };
 
     upstreamApiUrl = mkOption {
@@ -201,6 +213,10 @@ in {
 
   config = mkIf cfg.enable {
     assertions = [
+      {
+        assertion = cfg.browserSessionLifetimeSeconds == null || cfg.browserSessionLifetimeSeconds > 0;
+        message = "services.zed-local-cloud.browserSessionLifetimeSeconds must be positive when set.";
+      }
       {
         assertion = cfg.collab.databaseMaxConnections > 0;
         message = "services.zed-local-cloud.collab.databaseMaxConnections must be positive.";

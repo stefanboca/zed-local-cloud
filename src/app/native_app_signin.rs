@@ -7,7 +7,7 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{
-        error::{bad_request, internal_server_error},
+        error::{bad_request, internal_server_error, redirect},
         page, query_params,
     },
     session,
@@ -16,7 +16,7 @@ use topcoat::{
 
 use crate::{app::AppState, store};
 
-use super::is_topcoat_dev;
+use super::{auth, is_topcoat_dev};
 
 const LOGIN_LIFETIME: Duration = Duration::from_secs(10 * 60);
 
@@ -45,27 +45,36 @@ async fn sign_in(cx: &Cx) -> Result {
             store::delete_login_session(&state.database, &*old_hash)
                 .await
                 .map_err(|error| internal("failed to delete an old login session", error))?;
+
+            if let Some(refreshed) = session::refresh(cx).await? {
+                let authenticated_user_id = store::refresh_browser_session(
+                    &state.database,
+                    &*refreshed.token_hash,
+                    refreshed.expires_at,
+                )
+                .await
+                .map_err(|error| internal("failed to refresh the browser session", error))?;
+                if authenticated_user_id.is_some() {
+                    create_login_session(
+                        state,
+                        &*refreshed.token_hash,
+                        query.native_app_port,
+                        &query.native_app_public_key,
+                    )
+                    .await?;
+                    let authorization_url = auth::authorization_url(cx).await?;
+                    return Err(redirect(authorization_url.as_str()).into());
+                }
+            }
         }
         let login_session = session::start(cx).await?;
-        let expires_at_epoch = SystemTime::now()
-            .checked_add(LOGIN_LIFETIME)
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .and_then(|duration| i64::try_from(duration.as_secs()).ok())
-            .ok_or_else(|| {
-                internal(
-                    "failed to calculate login session expiry",
-                    anyhow::anyhow!("system clock is out of range"),
-                )
-            })?;
-        store::create_login_session(
-            &state.database,
+        create_login_session(
+            state,
             &*login_session.token_hash,
             query.native_app_port,
             &query.native_app_public_key,
-            expires_at_epoch,
         )
-        .await
-        .map_err(|error| internal("failed to save the login session", error))?;
+        .await?;
     }
 
     view! {
@@ -81,6 +90,43 @@ async fn sign_in(cx: &Cx) -> Result {
             </form>
         </main>
     }
+}
+
+async fn create_login_session(
+    state: &AppState,
+    token_hash: &[u8],
+    native_app_port: u16,
+    native_app_public_key: &str,
+) -> Result<()> {
+    let expires_at = SystemTime::now()
+        .checked_add(LOGIN_LIFETIME)
+        .ok_or_else(|| {
+            internal(
+                "failed to calculate login session expiry",
+                anyhow::anyhow!("system clock is out of range"),
+            )
+        })?;
+    store::create_login_session(
+        &state.database,
+        token_hash,
+        native_app_port,
+        native_app_public_key,
+        epoch_seconds(expires_at)?,
+    )
+    .await
+    .map_err(|error| internal("failed to save the login session", error))
+}
+
+fn epoch_seconds(time: SystemTime) -> Result<i64> {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+        .ok_or_else(|| {
+            internal(
+                "failed to calculate session expiry",
+                anyhow::anyhow!("system clock is out of range"),
+            )
+        })
 }
 
 fn decode_public_key(encoded: &str) -> anyhow::Result<RsaPublicKey> {

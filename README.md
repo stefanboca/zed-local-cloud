@@ -61,8 +61,9 @@ The sign-in flow is as follows:
 
 1. Zed opens `/native_app_signin` in the browser.
 2. The local cloud validates the Zed RSA public key.
-3. The local cloud starts a Topcoat browser session.
-4. The user selects the OIDC sign-in button.
+3. The local cloud starts or reads a Topcoat browser session.
+4. A new browser session shows the OIDC sign-in button. An authenticated
+   browser session starts OIDC automatically.
 5. The local cloud starts the OIDC authorization code flow with PKCE.
 6. The OIDC provider authenticates the user.
 7. The local cloud verifies the OIDC state, nonce, ID token, and access-token hash.
@@ -70,10 +71,12 @@ The sign-in flow is as follows:
 9. The local cloud writes the user and administrator status to PostgreSQL.
 10. The local cloud creates a new local Zed access token.
 11. The local cloud encrypts the token with the Zed RSA public key.
-12. The browser sends the encrypted token to the local Zed callback port.
+12. The local cloud retains a rotated browser session for the next sign-in.
+13. The browser sends the encrypted token to the local Zed callback port.
 
 The service stores only a SHA-256 hash of the local Zed access token. It does
-not store the OIDC access token or the OIDC client secret in PostgreSQL.
+not store the OIDC access token or the OIDC client secret in PostgreSQL. It
+also stores only a hash of the browser session token.
 
 ## OIDC claims
 
@@ -163,6 +166,11 @@ authentication.
 Set `services.zed-local-cloud.database.createLocally = false` for an external
 database. Then set `services.zed-local-cloud.database.url` to the external
 database URL.
+
+The authenticated browser session lasts 30 days by default. Set
+`services.zed-local-cloud.browserSessionLifetimeSeconds` to override this
+lifetime. The NixOS option is `null` by default, so the generated configuration
+uses the default compiled into the Rust service.
 
 The `zed-setup` service creates a 128-byte internal API key on its first run.
 It writes only the raw key to `/var/lib/zed/internal-api-key`. Later runs keep
@@ -323,7 +331,10 @@ ZED_SERVER_URL=https://zed.example.com \
 ```
 
 Select **Sign In** in Zed. The browser shows the local Topcoat login page. The
-browser then opens the configured OIDC provider.
+browser then opens the configured OIDC provider. After one successful login,
+later Zed sign-ins automatically open the provider. If the provider session is
+still valid, it redirects directly back without another prompt. Each completed
+OIDC flow refreshes the local profile and administrator status.
 
 ## Caddy routes
 
@@ -378,6 +389,7 @@ service does not read its configuration from environment variables.
 | --- | --- | --- |
 | `base_url` | Required | Set the public local cloud authority used for the HTTPS OIDC callback |
 | `bind_address` | `127.0.0.1:8787` | Set the local cloud TCP listen address |
+| `browser_session_lifetime_seconds` | `2592000` (30 days) | Set the authenticated browser session lifetime |
 | `database_url` | Local `zed` socket URL | Set the shared PostgreSQL URL |
 | `internal_api_key_file` | Required | Set the path to the raw internal API key |
 | `log_level` | `zed_local_cloud=info,sqlx=warn` | Set the tracing filter |
@@ -399,10 +411,12 @@ keys. The local cloud adds these tables:
 - `local_user_profiles` for local profile data
 - `local_user_tokens` for local token hashes
 - `local_oidc_identities` for issuer and subject links
+- `local_browser_sessions` for durable authenticated browser sessions
 - `local_login_sessions` for short browser login transactions
 
-The login-session table stores the Topcoat session token hash. It does not
-store the browser session token.
+The browser-session and login-session tables store the Topcoat session token
+hash. They do not store the browser session token. A successful OIDC callback
+rotates that token before it creates or replaces the durable browser session.
 
 SQLx uses one migration ledger for the collaboration server and the local
 cloud. Each migrator ignores migration versions that belong to the other
@@ -419,8 +433,9 @@ The local cloud accepts only the OIDC authorization code flow. It requires
 PKCE with SHA-256. It validates the callback state and nonce. It validates the
 ID-token signature, issuer, audience, expiry, and access-token hash.
 
-The default Topcoat session cookie is Secure, HttpOnly, SameSite=Lax, and
-limited to the root path. Use HTTPS for the public service.
+The Topcoat session cookie is Secure, HttpOnly, SameSite=Lax, and limited to
+the root path. Its default lifetime is 30 days. Use HTTPS for the public
+service.
 
 The extension proxy still uses a Zed-operated service. Zed service terms can
 apply to this access. This project is unofficial. Zed does not document this

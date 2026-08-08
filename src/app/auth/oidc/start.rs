@@ -11,6 +11,7 @@ use topcoat::{
     },
     session,
 };
+use url::Url;
 
 use crate::{app::AppState, store};
 
@@ -22,6 +23,11 @@ async fn start(cx: &Cx) -> Result<SeeOther> {
         return Ok(see_other("/native_app_signin_succeeded"));
     }
 
+    let authorization_url = authorization_url(cx).await?;
+    Ok(see_other(authorization_url.as_str()))
+}
+
+pub(crate) async fn authorization_url(cx: &Cx) -> Result<Url> {
     let state = app_context::<AppState>(cx);
     let token_hash = session::token_hash(cx)
         .await?
@@ -49,7 +55,7 @@ async fn start(cx: &Cx) -> Result<SeeOther> {
         return Err(bad_request("the login session expired").into());
     }
 
-    Ok(see_other(authorization_url.as_str()))
+    Ok(authorization_url)
 }
 
 fn internal(context: &'static str, error: impl Into<anyhow::Error>) -> topcoat::Error {

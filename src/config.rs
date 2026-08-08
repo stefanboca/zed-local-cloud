@@ -8,10 +8,13 @@ use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use url::Url;
 
+const DEFAULT_BROWSER_SESSION_LIFETIME_SECONDS: u64 = 30 * 24 * 60 * 60;
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub bind_address: SocketAddr,
     pub base_url: String,
+    pub browser_session_lifetime_seconds: u64,
     pub database_url: String,
     pub internal_api_key: String,
     pub log_level: String,
@@ -39,6 +42,8 @@ struct ConfigFile {
     #[serde(default = "default_bind_address")]
     bind_address: SocketAddr,
     base_url: String,
+    #[serde(default = "default_browser_session_lifetime_seconds")]
+    browser_session_lifetime_seconds: u64,
     #[serde(default = "default_database_url")]
     database_url: String,
     internal_api_key_file: PathBuf,
@@ -56,6 +61,10 @@ impl ConfigFile {
         ensure!(
             !self.database_url.trim().is_empty(),
             "database_url must not be empty"
+        );
+        ensure!(
+            self.browser_session_lifetime_seconds > 0,
+            "browser_session_lifetime_seconds must be greater than zero"
         );
         ensure!(
             !self.log_level.trim().is_empty(),
@@ -92,6 +101,7 @@ impl ConfigFile {
         Ok(Config {
             bind_address: self.bind_address,
             base_url: self.base_url,
+            browser_session_lifetime_seconds: self.browser_session_lifetime_seconds,
             database_url: self.database_url,
             internal_api_key,
             log_level: self.log_level,
@@ -148,6 +158,10 @@ fn default_bind_address() -> SocketAddr {
         .expect("the default bind address is valid")
 }
 
+fn default_browser_session_lifetime_seconds() -> u64 {
+    DEFAULT_BROWSER_SESSION_LIFETIME_SECONDS
+}
+
 fn default_database_url() -> String {
     "postgres://zed@%2Frun%2Fpostgresql/zed".to_owned()
 }
@@ -192,6 +206,10 @@ mod tests {
 
         assert_eq!(config.bind_address, default_bind_address());
         assert_eq!(config.base_url, "zed.example.com");
+        assert_eq!(
+            config.browser_session_lifetime_seconds,
+            DEFAULT_BROWSER_SESSION_LIFETIME_SECONDS
+        );
         assert_eq!(config.oidc.client_id, "zed-local");
         assert_eq!(config.oidc.scopes, ["profile", "email", "groups"]);
         assert_eq!(config.oidc.admin_claim, "groups");
@@ -212,6 +230,29 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_a_zero_browser_session_lifetime() {
+        let config: ConfigFile = toml::from_str(
+            r#"
+                base_url = "zed.example.com"
+                browser_session_lifetime_seconds = 0
+                internal_api_key_file = "/not-used"
+
+                [oidc]
+                issuer_url = "https://auth.example.com"
+                client_id = "zed-local"
+            "#,
+        )
+        .expect("valid TOML");
+
+        let error = config.load().expect_err("zero lifetime must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("browser_session_lifetime_seconds must be greater than zero")
+        );
     }
 
     #[test]

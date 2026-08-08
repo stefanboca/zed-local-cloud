@@ -160,7 +160,18 @@ async fn callback(cx: &Cx) -> Result<SeeOther> {
         encrypt_access_token(&login.native_app_public_key, local_access_token.as_bytes())
             .map_err(|error| internal("failed to encrypt the Zed access token", error))?;
 
-    session::stop(cx).await?;
+    let rotation = session::rotate(cx)
+        .await?
+        .ok_or_else(|| bad_request("the login session is missing"))?;
+    store::replace_browser_session(
+        &state.database,
+        &*rotation.revoked,
+        &*rotation.session.token_hash,
+        user_id,
+        rotation.session.expires_at,
+    )
+    .await
+    .map_err(|error| internal("failed to save the browser session", error))?;
     let mut callback = Url::parse(&format!("http://127.0.0.1:{}/", login.native_app_port))
         .map_err(|error| internal("failed to build the native app callback", error))?;
     callback
