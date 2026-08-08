@@ -25,13 +25,17 @@ in
     cargoLock.lockFile = ../../Cargo.lock;
     nativeBuildInputs = [pkg-config tailwindcss_4 topcoat-cli];
     buildInputs = [openssl];
-    TAILWIND_CLI = lib.getExe tailwindcss_4;
+    env.TAILWIND_CLI = lib.getExe tailwindcss_4;
 
+    # Topcoat's asset IDs include the build output path. Preserve and install
+    # the exact executable that the Topcoat bundler scanned.
     postBuild = ''
       topcoat asset bundle --release --bin zed-local-cloud --out target/assets
+      cp target/release/zed-local-cloud target/zed-local-cloud-with-assets
     '';
 
     postInstall = ''
+      install -m755 target/zed-local-cloud-with-assets $out/bin/zed-local-cloud
       mkdir -p $out/bin/assets
       cp -r target/assets/. $out/bin/assets/
     '';
