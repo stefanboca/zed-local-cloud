@@ -3,6 +3,7 @@
   openssl,
   pkg-config,
   rustPlatform,
+  stdenv,
   tailwindcss_4,
   topcoat-cli,
 }: let
@@ -27,15 +28,13 @@ in
     buildInputs = [openssl];
     env.TAILWIND_CLI = lib.getExe tailwindcss_4;
 
-    # Topcoat's asset IDs include the build output path. Preserve and install
-    # the exact executable that the Topcoat bundler scanned.
+    # Scan the artifact built by buildRustPackage instead of making Topcoat run
+    # a second Cargo build.
     postBuild = ''
-      topcoat asset bundle --release --bin zed-local-cloud --out target/assets
-      cp target/release/zed-local-cloud target/zed-local-cloud-with-assets
+      topcoat asset bundle --artifact "target/${stdenv.targetPlatform.rust.cargoShortTarget}/$cargoBuildType/zed-local-cloud"
     '';
 
     postInstall = ''
-      install -m755 target/zed-local-cloud-with-assets $out/bin/zed-local-cloud
       mkdir -p $out/bin/assets
       cp -r target/assets/. $out/bin/assets/
     '';

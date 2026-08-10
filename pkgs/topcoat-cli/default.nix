@@ -13,6 +13,7 @@ rustPlatform.buildRustPackage rec {
   };
 
   cargoHash = "sha256-9KeF31rlUp5EuirfvIN7Cs0KUuZFvirYyQWFB4Ud5CE=";
+  patches = [./bundle-existing-artifact.patch];
 
   # The published crate has a doctest that imports its workspace-only
   # `topcoat` development dependency.

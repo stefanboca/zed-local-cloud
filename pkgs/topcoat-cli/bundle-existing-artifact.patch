@@ -1,0 +1,28 @@
+diff --git a/src/asset/bundle.rs b/src/asset/bundle.rs
+--- a/src/asset/bundle.rs
++++ b/src/asset/bundle.rs
+@@ -7 +7 @@
+-use crate::common::cargo::{BuildFlags, BuildOpts, Metadata};
++use crate::common::cargo::{BuildError, BuildFlags, BuildOpts, Metadata};
+@@ -14,0 +15,7 @@
++    /// Read asset declarations from an existing Cargo artifact
++    #[arg(
++        long,
++        value_name = "PATH",
++        conflicts_with_all = ["bin", "package", "release", "profile"]
++    )]
++    artifact: Option<PathBuf>,
+@@ -21,4 +28,9 @@
+-    let (_, bytes) = BuildOpts::from(args.build)
+-        .build_and_read(|_, _| {})
+-        .await
+-        .unwrap_or_else(|e| e.print_and_exit());
++    let bytes = match args.artifact {
++        Some(path) => std::fs::read(path)
++            .unwrap_or_else(|error| BuildError::Read(error).print_and_exit()),
++        None => BuildOpts::from(args.build)
++            .build_and_read(|_, _| {})
++            .await
++            .unwrap_or_else(|error| error.print_and_exit())
++            .1,
++    };
