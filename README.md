@@ -21,9 +21,9 @@ writing rules of ASD-STE100 Simplified Technical English.
 ## Compatibility baseline
 
 The project uses
-[Zed v1.14.2](https://github.com/zed-industries/zed/tree/v1.14.2) as its
-compatibility baseline. This release has commit
-`02abf5b08fa12c1c20a155ae3f796ef4c6c1a01e`.
+[Zed v1.15.0](https://github.com/zed-industries/zed/tree/v1.15.0) as its
+compatibility baseline. This is the Zed release packaged by the current
+nixpkgs input.
 
 The baseline defines these interfaces:
 
@@ -48,9 +48,9 @@ The default installation has these components:
 | OIDC provider | External or local address | Authenticate users |
 
 The local cloud uses the [Topcoat](https://github.com/tokio-rs/topcoat) web
-framework. It uses Topcoat sessions for the browser login transaction. It uses
-the [openidconnect](https://docs.rs/openidconnect/4.0.1/openidconnect/) crate
-for OIDC discovery, PKCE, token exchange, and token verification.
+framework and encrypted private cookies for the OIDC transaction. It uses the
+[openidconnect](https://docs.rs/openidconnect/4.0.1/openidconnect/) crate for
+OIDC discovery, PKCE, token exchange, and token verification.
 
 The local cloud and the collaboration server use the same PostgreSQL database.
 They also use the same internal API key.
@@ -61,22 +61,17 @@ The sign-in flow is as follows:
 
 1. Zed opens `/native_app_signin` in the browser.
 2. The local cloud validates the Zed RSA public key.
-3. The local cloud starts or reads a Topcoat browser session.
-4. A new browser session shows the OIDC sign-in button. An authenticated
-   browser session starts OIDC automatically.
-5. The local cloud starts the OIDC authorization code flow with PKCE.
-6. The OIDC provider authenticates the user.
-7. The local cloud verifies the OIDC state, nonce, ID token, and access-token hash.
-8. The local cloud reads profile data from the ID token and the UserInfo endpoint.
-9. The local cloud writes the user and administrator status to PostgreSQL.
-10. The local cloud creates a new local Zed access token.
-11. The local cloud encrypts the token with the Zed RSA public key.
-12. The local cloud retains a rotated browser session for the next sign-in.
-13. The browser sends the encrypted token to the local Zed callback port.
+3. The local cloud stores the OIDC state and typed RSA key in a private cookie.
+4. The browser is redirected to the OIDC authorization code flow with PKCE.
+5. The OIDC provider authenticates the user.
+6. The local cloud verifies the OIDC state, nonce, ID token, and access-token hash.
+7. The local cloud reads profile data from the ID token and the UserInfo endpoint.
+8. The local cloud writes the user and administrator status to PostgreSQL.
+9. The local cloud creates and encrypts a new local Zed access token.
+10. The browser sends the encrypted token to the local Zed callback port.
 
 The service stores only a SHA-256 hash of the local Zed access token. It does
-not store the OIDC access token or the OIDC client secret in PostgreSQL. It
-also stores only a hash of the browser session token.
+not store the OIDC access token, OIDC client secret, or OIDC flow in PostgreSQL.
 
 ## OIDC claims
 
@@ -155,9 +150,10 @@ The module copies `virtualHost` to the local cloud `base_url`. The local cloud
 sets the scheme to `https` and adds `/auth/oidc/callback`. Register that
 derived URL with the OIDC provider.
 
-Systemd loads `clientSecretFile` as a credential. The local cloud reads the
-raw secret from its private credential directory. The TOML configuration
-contains only the credential path.
+Systemd loads `clientSecretFile` as the `oidc-client-secret` credential. The
+local cloud reads the raw secret from its private credential directory. The
+TOML configuration does not contain the secret or its path. The service uses
+a confidential OIDC client and requires this secret.
 
 The module creates a local PostgreSQL database by default. It creates the
 `zed` system user and the `zed` database. It uses PostgreSQL peer
@@ -167,15 +163,11 @@ Set `services.zed-local-cloud.database.createLocally = false` for an external
 database. Then set `services.zed-local-cloud.database.url` to the external
 database URL.
 
-The authenticated browser session lasts 30 days by default. Set
-`services.zed-local-cloud.browserSessionLifetimeSeconds` to override this
-lifetime. The NixOS option is `null` by default, so the generated configuration
-uses the default compiled into the Rust service.
-
 The `zed-setup` service creates a 128-byte internal API key on its first run.
 It writes only the raw key to `/var/lib/zed/internal-api-key`. Later runs keep
-the same non-empty file. The file mode is `0600`. The generated TOML
-configuration contains the path to this file. It does not contain the key.
+the same non-empty file. The file mode is `0600`. The module loads this file
+as the `internal-api-key` systemd credential. The generated TOML configuration
+does not contain the key or its path.
 
 Each secret has a separate file. Each secret file contains only the raw
 secret. Do not use TOML syntax in a secret file.
@@ -285,23 +277,25 @@ the raw client secret. Do not add a key name, quotes, or TOML syntax.
 Create `zed-local-cloud.toml`:
 
 ```toml
-base_url = "zed.example.com"
+base_url = "https://zed.example.com"
 bind_address = "127.0.0.1:8787"
 database_url = "postgres://postgres@localhost/zed"
-internal_api_key_file = "/var/lib/zed/internal-api-key"
 log_level = "zed_local_cloud=info,sqlx=warn"
 
 [oidc]
 issuer_url = "https://auth.example.com"
 client_id = "zed-local"
-client_secret_file = "/run/secrets/zed-oidc-client-secret"
 scopes = ["profile", "email", "groups"]
 admin_claim = "groups"
 admin_value = "zed-admin"
 ```
 
 The local cloud constructs the OIDC redirect URL from `base_url`. It sets the
-scheme to `https` and sets the path to `/auth/oidc/callback`.
+path to `/auth/oidc/callback` and keeps the configured scheme and authority.
+
+Put files named `internal-api-key` and `oidc-client-secret` in one private
+directory. Set `CREDENTIALS_DIRECTORY` to that directory when you run the
+service outside systemd.
 
 Start the collaboration server from the compatible Zed source tree:
 
@@ -314,7 +308,8 @@ Start the local cloud:
 
 ```sh
 cd /path/to/zed-local-cloud
-nix develop -c cargo run -- --config ./zed-local-cloud.toml
+CREDENTIALS_DIRECTORY=/run/secrets \
+  nix develop -c cargo run -- --config ./zed-local-cloud.toml
 ```
 
 The local cloud performs OIDC discovery during startup. Startup fails if the
@@ -330,11 +325,10 @@ ZED_SERVER_URL=https://zed.example.com \
   nix develop -c cargo run --package=zed
 ```
 
-Select **Sign In** in Zed. The browser shows the local Topcoat login page. The
-browser then opens the configured OIDC provider. After one successful login,
-later Zed sign-ins automatically open the provider. If the provider session is
-still valid, it redirects directly back without another prompt. Each completed
-OIDC flow refreshes the local profile and administrator status.
+Select **Sign In** in Zed. The local cloud redirects the browser to the
+configured OIDC provider. If the provider session is still valid, it redirects
+directly back without another prompt. Each completed OIDC flow refreshes the
+local profile and administrator status.
 
 ## Caddy routes
 
@@ -359,7 +353,6 @@ upstream server.
 The local cloud supplies these public client routes:
 
 - `GET /native_app_signin`
-- `POST /auth/oidc/start`
 - `GET /auth/oidc/callback`
 - `GET /native_app_signin_succeeded`
 - `GET /client/users/me`
@@ -382,26 +375,25 @@ Users appear in local search results only after their first local OIDC login.
 
 ## Configuration
 
-Start `zed-local-cloud` with `--config` and the path to one TOML file. The
-service does not read its configuration from environment variables.
+Start `zed-local-cloud` with `--config` and the path to one TOML file. In
+production, application settings come from this file and secrets come from
+systemd credentials. `RUST_LOG` can override the configured tracing filter.
 
 | TOML key | Default | Function |
 | --- | --- | --- |
-| `base_url` | Required | Set the public local cloud authority used for the HTTPS OIDC callback |
+| `base_url` | Required | Set the public local cloud URL used for the OIDC callback |
 | `bind_address` | `127.0.0.1:8787` | Set the local cloud TCP listen address |
-| `browser_session_lifetime_seconds` | `2592000` (30 days) | Set the authenticated browser session lifetime |
 | `database_url` | Local `zed` socket URL | Set the shared PostgreSQL URL |
-| `internal_api_key_file` | Required | Set the path to the raw internal API key |
 | `log_level` | `zed_local_cloud=info,sqlx=warn` | Set the tracing filter |
 | `oidc.issuer_url` | Required | Set the OIDC issuer URL |
 | `oidc.client_id` | Required | Set the OIDC client identifier |
-| `oidc.client_secret_file` | Empty | Set the path to the raw OIDC client secret |
 | `oidc.scopes` | `profile`, `email` | Set the additional OIDC scopes |
 | `oidc.admin_claim` | `roles` | Set the administrator claim path |
 | `oidc.admin_value` | `admin` | Set the administrator claim value |
 
-Do not put secret values in the TOML file. Use one raw file for each secret.
-The service removes leading and trailing white space when it reads a secret.
+Do not put secret values in the TOML file. The service requires the systemd
+credentials `internal-api-key` and `oidc-client-secret`. It removes leading
+and trailing white space when it reads each credential.
 
 ## Database ownership
 
@@ -411,12 +403,9 @@ keys. The local cloud adds these tables:
 - `local_user_profiles` for local profile data
 - `local_user_tokens` for local token hashes
 - `local_oidc_identities` for issuer and subject links
-- `local_browser_sessions` for durable authenticated browser sessions
-- `local_login_sessions` for short browser login transactions
 
-The browser-session and login-session tables store the Topcoat session token
-hash. They do not store the browser session token. A successful OIDC callback
-rotates that token before it creates or replaces the durable browser session.
+An encrypted private cookie holds the OIDC flow state and RSA public key. A
+successful OIDC callback consumes that cookie.
 
 SQLx uses one migration ledger for the collaboration server and the local
 cloud. Each migrator ignores migration versions that belong to the other
@@ -433,28 +422,47 @@ The local cloud accepts only the OIDC authorization code flow. It requires
 PKCE with SHA-256. It validates the callback state and nonce. It validates the
 ID-token signature, issuer, audience, expiry, and access-token hash.
 
-The Topcoat session cookie is Secure, HttpOnly, SameSite=Lax, and limited to
-the root path. Its default lifetime is 30 days. Use HTTPS for the public
-service.
+The private OIDC flow cookie is HttpOnly, SameSite=Lax, and limited to the root
+path. Use HTTPS for the public service.
 
 The extension proxy still uses a Zed-operated service. Zed service terms can
 apply to this access. This project is unofficial. Zed does not document this
 configuration as a supported self-hosted service.
 
-## Web UI development
+## Development VM and web UI
+
+Start the development backend VM first:
+
+```sh
+nix run
+```
+
+The VM runs PostgreSQL, the Zed collaboration server, Caddy, and
+`oidc-provider-mock`. It does not run the local cloud executable. It forwards
+PostgreSQL to `127.0.0.1:5432`, OIDC to `http://localhost:9091`, and the
+unified Zed endpoint to `http://localhost:8787`. The tracked `.env` points
+SQLx at this database.
+
+The VM applies the collaboration migrations. Apply local migrations manually
+with `--ignore-missing` because both components share the SQLx migration
+ledger:
+
+```sh
+nix develop -c cargo sqlx migrate run --ignore-missing
+```
 
 The Nix development shell includes the version-matched Topcoat CLI and the
-Tailwind CSS CLI. Topcoat builds the stylesheet from the utility classes in
-the Rust views. Start the UI development server:
+Tailwind CSS CLI. In a second terminal, start the local cloud and UI:
 
 ```sh
 nix develop -c topcoat dev
 ```
 
-Open `http://127.0.0.1:3000`. The index links to each UI preview. The mock
-sign-in button opens the sign-in-complete preview. This mode does not read a
-configuration file, connect to PostgreSQL, or perform OIDC discovery. The
-application selects this mode when `topcoat dev` sets `TOPCOAT_DEV_URL`.
+Open `http://localhost:8787/native_app_signin` with the query parameters sent
+by Zed, or set `ZED_SERVER_URL=http://localhost:8787` in a development Zed
+client. `topcoat dev` selects the built-in development configuration. The
+application still uses the real database, OIDC, cookie, and route flows; only
+the configuration source and asset-reload mode differ from production.
 
 Topcoat rebuilds the Rust application and the Tailwind stylesheet when a
 source file changes. The shared layout includes `topcoat::dev::script()`,
@@ -488,9 +496,8 @@ nix build '.#checks.x86_64-linux.nixos-basic.driverInteractive'
 ./result/bin/nixos-test-driver
 ```
 
-The virtual machine uses a local OIDC test provider. The test checks OIDC
-discovery, PKCE, token validation, UserInfo, the picture claim, and the
-administrator role. The test grants the role and then removes it.
+The virtual machine uses `oidc-provider-mock`. The test checks OIDC discovery,
+PKCE, token validation, UserInfo, and the complete native-app callback flow.
 
 The virtual machine also uses a local extension API. The test checks the list
 path and a nested download path. It checks query parameters. It also checks

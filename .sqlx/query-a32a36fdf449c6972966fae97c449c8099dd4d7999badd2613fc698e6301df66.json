@@ -1,0 +1,107 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            profiles.user_id,\n            'local-' || profiles.user_id::text AS \"stable_id!\",\n            profiles.github_login AS \"username!\",\n            profiles.github_login,\n            profiles.avatar_url,\n            profiles.name,\n            users.admin,\n            users.connected_once\n        FROM unnest($1::integer[]) WITH ORDINALITY AS requested(user_id, position)\n        JOIN local_user_profiles profiles ON profiles.user_id = requested.user_id\n        JOIN users ON users.id = profiles.user_id\n        ORDER BY requested.position\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "local_user_profiles",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "stable_id!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "username!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "local_user_profiles",
+            "name": "github_login"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "github_login",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "local_user_profiles",
+            "name": "github_login"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "avatar_url",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "local_user_profiles",
+            "name": "avatar_url"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "local_user_profiles",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "admin",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "admin"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "connected_once",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "connected_once"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4Array"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "a32a36fdf449c6972966fae97c449c8099dd4d7999badd2613fc698e6301df66"
+}

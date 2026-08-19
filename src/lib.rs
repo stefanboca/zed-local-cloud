@@ -1,7 +1,8 @@
 mod app;
+mod assets;
 mod config;
+mod database;
 mod oidc;
-mod store;
 
-pub use app::{is_topcoat_dev, routes, serve};
-pub use config::Config;
+pub use app::serve;
+pub use config::{Config, Secrets};

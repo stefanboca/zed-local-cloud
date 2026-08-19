@@ -6,56 +6,25 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 base64 = "0.23.1"
-openidconnect = {
-  version = "4.0.1",
-  default-features = false,
-  features = ["reqwest", "rustls-tls"]
-}
+openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 rand = "0.10.2"
-rsa = "0.10.0-rc.18"
+rsa = { version = "0.10.0-rc.18", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
-sqlx = {
-  version = "0.9.0",
-  default-features = false,
-  features = ["macros", "migrate", "postgres", "runtime-tokio", "time", "uuid"]
-}
-tokio = {
-  version = "1.53.1",
-  features = ["macros", "net", "rt-multi-thread", "signal", "time"]
-}
+sqlx = { version = "0.9.0", default-features = false, features = ["macros", "migrate", "postgres", "runtime-tokio", "time", "uuid"] }
+tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
 toml = "1.1.4"
-topcoat = {
-  version = "0.5.0",
-  default-features = false,
-  features = [
-    "asset",
-    "cookie",
-    "discover",
-    "router",
-    "serve",
-    "session",
-    "tailwind",
-    "view",
-    "websocket"
-  ]
-}
+topcoat = { version = "0.6.2", default-features = false, features = ["asset", "cookie", "discover", "router", "runtime", "serve", "tailwind", "tower", "view", "websocket"] }
 tracing = "0.1.44"
+tracing-journald = "0.3.2"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tower-http = { version = "0.7.0", features = ["trace"] }
 url = "2.5.8"
-uuid = "1.24.0"
+uuid = "1.24.1"
 
 # add the native roots feature to reqwest pulled in by openidconnect
-reqwest = {
-  version = "*",
-  default-features = false,
-  features = ["rustls-tls-native-roots"]
-}
+reqwest = { version = "*", default-features = false, features = ["rustls-tls-native-roots"] }
 
 [build-dependencies]
-topcoat = {
-  version = "0.5.0",
-  default-features = false,
-  features = ["tailwind"]
-}
+topcoat = { version = "0.6.2", default-features = false, features = ["tailwind"] }

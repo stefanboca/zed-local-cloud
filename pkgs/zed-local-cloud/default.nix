@@ -1,13 +1,11 @@
 {
   lib,
-  openssl,
-  pkg-config,
   rustPlatform,
-  stdenv,
   tailwindcss_4,
   topcoat-cli,
 }: let
   inherit (lib.fileset) fileFilter toSource unions;
+  inherit (lib.meta) getExe;
   inherit (lib.strings) hasPrefix;
 in
   rustPlatform.buildRustPackage {
@@ -17,26 +15,40 @@ in
     src = toSource {
       root = ../..;
       fileset = unions [
-        (fileFilter (file: file.hasExt "rs") ../..)
+        (fileFilter (file: file.hasExt "rs" || file.hasExt "svg") ../..)
         (fileFilter (file: hasPrefix "Cargo" file.name) ../..)
+        ../../.sqlx
         ../../migrations
       ];
     };
 
     cargoLock.lockFile = ../../Cargo.lock;
-    nativeBuildInputs = [pkg-config tailwindcss_4 topcoat-cli];
-    buildInputs = [openssl];
-    env.TAILWIND_CLI = lib.getExe tailwindcss_4;
+    nativeBuildInputs = [tailwindcss_4 topcoat-cli];
+    env = {
+      SQLX_OFFLINE = "true";
+      TAILWIND_CLI = getExe tailwindcss_4;
+    };
 
-    # Scan the artifact built by buildRustPackage instead of making Topcoat run
-    # a second Cargo build.
-    postBuild = ''
-      topcoat asset bundle --artifact "target/${stdenv.targetPlatform.rust.cargoShortTarget}/$cargoBuildType/zed-local-cloud"
+    # Let Topcoat own the Cargo build so it can bundle the exact artifact it
+    # produced without launching a second build.
+    buildPhase = ''
+      runHook preBuild
+      topcoat asset bundle --release --bin zed-local-cloud
+      runHook postBuild
     '';
 
-    postInstall = ''
-      mkdir -p $out/bin/assets
-      cp -r target/assets/. $out/bin/assets/
+    checkPhase = ''
+      runHook preCheck
+      cargo test -j "$NIX_BUILD_CORES" --offline --profile release
+      runHook postCheck
+    '';
+
+    installPhase = ''
+      runHook preInstall
+      install -Dm755 target/release/zed-local-cloud $out/bin/zed-local-cloud
+      cp -r target/release/assets $out/bin/assets
+      install -Dm644 assets/zed.svg $out/share/zed-local-cloud/zed.svg
+      runHook postInstall
     '';
 
     meta = {

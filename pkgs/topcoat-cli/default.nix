@@ -5,15 +5,14 @@
 }:
 rustPlatform.buildRustPackage rec {
   pname = "topcoat-cli";
-  version = "0.5.0";
+  version = "0.6.2";
 
   src = fetchCrate {
     inherit pname version;
-    hash = "sha256-Z/Z9KCIj6M36MvKOpC3b0S24MPpov2nQCdNCg1Fp98U=";
+    hash = "sha256-+6DKc2yjKwju64iokWV1EUXf62GGj1W32kp7E7WVKdM=";
   };
 
-  cargoHash = "sha256-9KeF31rlUp5EuirfvIN7Cs0KUuZFvirYyQWFB4Ud5CE=";
-  patches = [./bundle-existing-artifact.patch];
+  cargoHash = "sha256-CDnvF0CMkpjIK0dDhuxIfpm0PnyEjFvbIjWhgSfFk1w=";
 
   # The published crate has a doctest that imports its workspace-only
   # `topcoat` development dependency.

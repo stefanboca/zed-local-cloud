@@ -1,34 +1,32 @@
 use serde_json::{Value, json};
 use topcoat::{
     Result,
-    context::Cx,
+    context::{Cx, app_context},
     router::{
         content::Json,
         error::{internal_server_error, unauthorized},
-        headers, route,
+        request::headers,
+        route,
     },
 };
 
 use super::super::parse_authorization_header;
-use crate::{app::production_state, store};
+use crate::database::{self, Database};
 
 #[route(GET)]
 async fn authenticated_user(cx: &Cx) -> Result<Json<Value>> {
-    let state = production_state(cx)?;
+    let database = app_context::<Database>(cx);
     let credentials = parse_authorization_header(headers(cx))?;
-    let user = store::authenticated_user(
-        &state.database,
-        credentials.user_id,
-        &credentials.access_token,
-    )
-    .await
-    .map_err(|error| internal("failed to load the authenticated user", error))?
-    .ok_or_else(unauthorized)?;
+    let user = database
+        .authenticated_user(credentials.user_id, &credentials.access_token)
+        .await
+        .map_err(|error| internal("failed to load the authenticated user", error))?
+        .ok_or_else(unauthorized)?;
 
     Ok(Json(authenticated_user_response(&user)))
 }
 
-fn authenticated_user_response(user: &store::AuthenticatedLocalUser) -> Value {
+fn authenticated_user_response(user: &database::AuthenticatedLocalUser) -> Value {
     json!({
         "user": {
             "id_v2": user.stable_id,

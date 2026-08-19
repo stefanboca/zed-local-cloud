@@ -13,9 +13,35 @@ use openidconnect::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use url::{ParseError, Url};
+use url::Url;
 
 use crate::config::Config;
+
+mod authorization;
+
+pub use authorization::OidcFlow;
+
+pub struct OidcAuthorization {
+    pub url: Url,
+    pub state: String,
+    pub nonce: String,
+    pub pkce_verifier: String,
+}
+
+#[derive(Debug)]
+pub struct OidcProfile {
+    pub issuer: String,
+    pub subject: String,
+    pub preferred_username: Option<String>,
+    pub avatar_url: String,
+    pub name: Option<String>,
+    pub email_address: Option<String>,
+}
+
+pub struct OidcLogin {
+    pub profile: OidcProfile,
+    pub admin: bool,
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct OidcClaims(pub HashMap<String, Value>);
@@ -59,25 +85,21 @@ pub struct Oidc {
 }
 
 impl Oidc {
-    pub async fn discover(config: &Config) -> anyhow::Result<Self> {
+    pub async fn discover(config: &Config, client_secret: String) -> anyhow::Result<Self> {
         let callback_url = oidc_callback_url(&config.base_url)?;
         let http_client = openidconnect::reqwest::ClientBuilder::new()
             .redirect(openidconnect::reqwest::redirect::Policy::none())
             .build()
             .context("failed to construct the OIDC HTTP client")?;
-        let issuer = IssuerUrl::new(config.oidc_issuer_url.clone())
+        let issuer = IssuerUrl::new(config.oidc.issuer_url.clone())
             .context("the OIDC issuer URL is invalid")?;
         let provider_metadata = CoreProviderMetadata::discover_async(issuer, &http_client)
             .await
             .context("failed to discover the OIDC provider")?;
-        let client_secret = config
-            .oidc_client_secret
-            .as_ref()
-            .map(|secret| ClientSecret::new(secret.clone()));
         let client = OidcClient::from_provider_metadata(
             provider_metadata,
-            ClientId::new(config.oidc_client_id.clone()),
-            client_secret,
+            ClientId::new(config.oidc.client_id.clone()),
+            Some(ClientSecret::new(client_secret)),
         )
         .set_redirect_uri(
             RedirectUrl::new(callback_url.to_string())
@@ -91,17 +113,8 @@ impl Oidc {
     }
 }
 
-fn oidc_callback_url(base_url: &str) -> anyhow::Result<Url> {
-    let mut callback_url = match Url::parse(base_url) {
-        Ok(url) if url.has_host() => url,
-        Ok(_) | Err(ParseError::RelativeUrlWithoutBase) => {
-            Url::parse(&format!("https://{base_url}")).context("the base URL is invalid")?
-        }
-        Err(error) => return Err(error).context("the base URL is invalid"),
-    };
-    callback_url
-        .set_scheme("https")
-        .map_err(|()| anyhow::anyhow!("the base URL cannot use the https scheme"))?;
+fn oidc_callback_url(base_url: &Url) -> anyhow::Result<Url> {
+    let mut callback_url = base_url.clone();
     callback_url.set_path("/auth/oidc/callback");
     callback_url.set_query(None);
     callback_url.set_fragment(None);
@@ -131,24 +144,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn constructs_an_https_redirect_url_from_the_base_url() {
+    fn constructs_a_redirect_url_from_the_base_url() {
         assert_eq!(
-            oidc_callback_url("zed.example.com/old?query=1#fragment")
+            oidc_callback_url(&Url::parse("https://zed.example.com/old?query=1#fragment").unwrap())
                 .expect("valid base URL")
                 .as_str(),
             "https://zed.example.com/auth/oidc/callback"
         );
         assert_eq!(
-            oidc_callback_url("http://zed.example.com")
+            oidc_callback_url(&Url::parse("http://zed.example.com").unwrap())
                 .expect("valid base URL")
                 .as_str(),
-            "https://zed.example.com/auth/oidc/callback"
-        );
-        assert_eq!(
-            oidc_callback_url("localhost:8443")
-                .expect("valid base URL")
-                .as_str(),
-            "https://localhost:8443/auth/oidc/callback"
+            "http://zed.example.com/auth/oidc/callback"
         );
     }
 

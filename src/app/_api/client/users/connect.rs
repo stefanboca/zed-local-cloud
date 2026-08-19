@@ -2,8 +2,8 @@ use topcoat::{
     Result,
     context::Cx,
     router::{
-        Response,
         content::websocket::{Message, WebSocket, WebSocketUpgrade},
+        response::Response,
         route,
     },
 };

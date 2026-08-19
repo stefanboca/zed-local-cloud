@@ -8,7 +8,10 @@
     name = "zed-local-cloud-basic";
 
     nodes.machine = {
-      imports = [module];
+      imports = [
+        module
+        (import ../../dev/oidc-provider-mock.nix {port = 18080;})
+      ];
 
       services.zed-local-cloud = {
         enable = true;
@@ -25,25 +28,22 @@
         };
       };
 
-      systemd.services.fake-oidc = {
-        wantedBy = ["multi-user.target"];
-        before = ["zed-local-cloud.service"];
-        serviceConfig.ExecStart = "${pkgs.python3}/bin/python ${../fake-oidc.py} ${pkgs.openssl}/bin/openssl";
-      };
       systemd.services.fake-extensions = {
         wantedBy = ["multi-user.target"];
         before = ["caddy.service"];
         serviceConfig.ExecStart = "${pkgs.python3}/bin/python ${../fake-extensions.py}";
       };
       systemd.services.zed-local-cloud = {
-        requires = ["fake-oidc.service"];
-        after = ["fake-oidc.service"];
+        requires = ["oidc-provider-mock.service"];
+        after = ["oidc-provider-mock.service"];
       };
     };
 
     testScript = ''
       import base64
+      import html
       import json
+      import re
       import shlex
       import tomllib
       from urllib.parse import parse_qs, quote, urlsplit
@@ -53,7 +53,7 @@
       for unit in [
           "postgresql.target",
           "fake-extensions.service",
-          "fake-oidc.service",
+          "oidc-provider-mock.service",
           "zed-setup.service",
           "zed-local-cloud.service",
           "zed-collab.service",
@@ -116,23 +116,21 @@
       assert auth_command[-2] == "--config", auth_command
       auth_config_text = machine.succeed(f"cat {auth_command[-1]}")
       auth_config = tomllib.loads(auth_config_text)
-      assert auth_config["base_url"] == "localhost"
+      assert auth_config["base_url"] == "https://localhost"
       assert auth_config["bind_address"] == "127.0.0.1:8787"
-      assert "browser_session_lifetime_seconds" not in auth_config
       assert auth_config["database_url"] == (
           "postgres://zed@%2Frun%2Fpostgresql/zed"
       )
-      assert auth_config["internal_api_key_file"] == (
-          "/var/lib/zed/internal-api-key"
-      )
-      assert auth_config["oidc"]["client_secret_file"] == (
-          "/run/credentials/zed-local-cloud.service/oidc-client-secret"
-      )
+      assert "internal_api_key_file" not in auth_config
+      assert "client_secret_file" not in auth_config["oidc"]
       assert "redirect_url" not in auth_config["oidc"]
       assert "test-client-secret" not in auth_config_text
       assert machine.succeed(
           "cat /run/credentials/zed-local-cloud.service/oidc-client-secret"
       ) == "test-client-secret"
+      assert machine.succeed(
+          "cat /run/credentials/zed-local-cloud.service/internal-api-key"
+      ) == key
 
       collab_environment = tomllib.loads(
           machine.succeed("cat /run/zed-collab/crates/collab/.env.toml")
@@ -163,7 +161,6 @@
           "20251208000000",
           "20260724000000",
           "20260806000000",
-          "20260807000000",
       ], migrations
 
       environments = machine.succeed(
@@ -255,6 +252,38 @@
       }
       assert response("/native_app_signin_succeeded") == "200"
       assert response("/native_app_signin") == "400"
+      assert response("/favicon.ico") == "200"
+      favicon = machine.succeed(
+          "curl --insecure --silent --show-error --include "
+          "https://localhost/favicon.ico"
+      )
+      assert "content-type: image/svg+xml" in favicon.lower(), favicon
+      assert "<svg" in favicon, favicon
+      assert response("/channel/test-41767") == "200"
+      channel_page = machine.succeed(
+          "curl --insecure --silent --show-error "
+          "https://localhost/channel/test-41767"
+      )
+      assert "zed://channel/test-41767" in channel_page, channel_page
+      assert "Launching Zed" in channel_page, channel_page
+      assert re.search(
+          r"window\.location\.href = __external\d+\.toString\(\) "
+          r"\+ window\.location\.hash",
+          html.unescape(channel_page),
+      ), channel_page
+      assert response("/channel/test-41767/notes") == "200"
+      notes_page = machine.succeed(
+          "curl --insecure --silent --show-error "
+          "https://localhost/channel/test-41767/notes"
+      )
+      assert "zed://channel/test-41767/notes" in notes_page, notes_page
+      assert response("/channel/not-a-channel") == "404"
+      assert response("/missing-page") == "404"
+      missing_page = machine.succeed(
+          "curl --insecure --silent --show-error https://localhost/missing-page"
+      )
+      assert "404 — Not Found" in missing_page, missing_page
+      assert "The page could not be found" in missing_page, missing_page
 
       machine.succeed(
           "${pkgs.openssl}/bin/openssl genrsa "
@@ -267,42 +296,32 @@
           "| base64 -w0 | tr '+/' '-_'"
       ).strip()
 
-      def oidc_login(automatic):
+      def oidc_login():
           signin_url = (
               "https://localhost/native_app_signin"
               "?native_app_port=49152"
               f"&native_app_public_key={quote(native_public_key)}"
           )
-          if automatic:
-              authorization_url = machine.succeed(
-                  "curl --insecure --silent --show-error --output /dev/null "
-                  "--cookie /tmp/login-cookies "
-                  "--cookie-jar /tmp/login-cookies "
-                  "--write-out='%header{location}' "
-                  f"{shlex.quote(signin_url)}"
-              ).strip()
-          else:
-              login_page = machine.succeed(
-                  "curl --insecure --silent --show-error "
-                  "--cookie-jar /tmp/login-cookies "
-                  f"{shlex.quote(signin_url)}"
-              )
-              assert "Continue with OpenID Connect" in login_page
-
-              authorization_url = machine.succeed(
-                  "curl --insecure --silent --show-error --output /dev/null "
-                  "--request POST "
-                  "--cookie /tmp/login-cookies "
-                  "--cookie-jar /tmp/login-cookies "
-                  "--write-out='%header{location}' "
-                  "https://localhost/auth/oidc/start"
-              ).strip()
+          login_page = machine.succeed(
+              "curl --insecure --silent --show-error "
+              "--cookie /tmp/login-cookies "
+              "--cookie-jar /tmp/login-cookies "
+              f"{shlex.quote(signin_url)}"
+          )
+          assert "Authenticating with OpenID Connect" in login_page
+          assert "You will automatically be redirected" in login_page
+          redirect = re.search(r'cx\.hydrate\((.*?)\)', login_page)
+          assert redirect is not None, login_page
+          authorization_url = json.loads(html.unescape(redirect.group(1)))
           assert authorization_url.startswith(
-              "http://127.0.0.1:18080/authorize?"
+              "http://127.0.0.1:18080/oauth2/authorize?"
           ), authorization_url
 
           callback_url = machine.succeed(
               "curl --silent --show-error --output /dev/null "
+              "--data-urlencode sub=alice "
+              "--cookie /tmp/login-cookies "
+              "--cookie-jar /tmp/login-cookies "
               "--write-out='%header{location}' "
               f"{shlex.quote(authorization_url)}"
           ).strip()
@@ -324,7 +343,7 @@
           assert callback_query["user_id"] == ["1"], callback_query
           assert len(callback_query["access_token"]) == 1, callback_query
 
-      oidc_login(False)
+      oidc_login()
       first_profile = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed "
           "--tuples-only --no-align --field-separator='|' "
@@ -332,11 +351,9 @@
           "FROM users JOIN local_user_profiles profiles "
           "ON profiles.user_id = users.id WHERE users.id = 1\""
       ).strip()
-      assert first_profile == (
-          "t|https://images.example.com/alice-1.png"
-      ), first_profile
+      assert first_profile == "f|", first_profile
 
-      oidc_login(True)
+      oidc_login()
       second_profile = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed "
           "--tuples-only --no-align --field-separator='|' "
@@ -344,18 +361,11 @@
           "FROM users JOIN local_user_profiles profiles "
           "ON profiles.user_id = users.id WHERE users.id = 1\""
       ).strip()
-      assert second_profile == (
-          "f|https://images.example.com/alice-2.png"
-      ), second_profile
+      assert second_profile == "f|", second_profile
       assert machine.succeed(
           "runuser -u postgres -- psql --dbname=zed "
           "--tuples-only --no-align "
           "--command='SELECT count(*) FROM local_oidc_identities'"
-      ).strip() == "1"
-      assert machine.succeed(
-          "runuser -u postgres -- psql --dbname=zed "
-          "--tuples-only --no-align "
-          "--command='SELECT count(*) FROM local_browser_sessions'"
       ).strip() == "1"
     '';
   };

@@ -1,21 +1,11 @@
-use std::time::SystemTime;
-
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
-use sqlx::{FromRow, PgPool, types::time::OffsetDateTime};
+use sqlx::PgPool;
 use uuid::Uuid;
 
-#[derive(Debug)]
-pub struct OidcProfile {
-    pub issuer: String,
-    pub subject: String,
-    pub preferred_username: Option<String>,
-    pub avatar_url: String,
-    pub name: Option<String>,
-    pub email_address: Option<String>,
-}
+use crate::oidc::OidcProfile;
 
-#[derive(Debug, FromRow)]
+#[derive(Debug)]
 pub struct AuthenticatedLocalUser {
     pub user_id: i32,
     pub stable_id: String,
@@ -28,15 +18,7 @@ pub struct AuthenticatedLocalUser {
     pub connected_once: bool,
 }
 
-#[derive(Debug, FromRow)]
-pub struct LoginSession {
-    pub native_app_port: i32,
-    pub native_app_public_key: String,
-    pub oidc_nonce: String,
-    pub oidc_pkce_verifier: String,
-}
-
-#[derive(Clone, Debug, FromRow, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct LocalUser {
     #[serde(rename = "legacy_user_id")]
     pub user_id: i32,
@@ -51,7 +33,7 @@ pub struct LocalUser {
     pub connected_once: bool,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug)]
 pub struct ChannelMemberUser {
     pub user_id: i32,
     pub stable_id: String,
@@ -74,25 +56,24 @@ pub async fn sync_oidc_user(
     let mut transaction = database.begin().await?;
 
     let identity_lock = oidc_identity_lock_key(&profile.issuer, &profile.subject);
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
-        .bind(identity_lock)
+    sqlx::query!("SELECT pg_advisory_xact_lock(hashtext($1))", identity_lock)
         .execute(&mut *transaction)
         .await?;
 
-    let existing_user_id = sqlx::query_scalar::<_, i32>(
+    let existing_user_id = sqlx::query_scalar!(
         r#"
         SELECT user_id
         FROM local_oidc_identities
         WHERE issuer = $1 AND subject = $2
         "#,
+        &profile.issuer,
+        &profile.subject,
     )
-    .bind(&profile.issuer)
-    .bind(&profile.subject)
     .fetch_optional(&mut *transaction)
     .await?;
 
     let user_id = if let Some(user_id) = existing_user_id {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE users
             SET admin = $2,
@@ -100,15 +81,15 @@ pub async fn sync_oidc_user(
                 name = $4
             WHERE id = $1
             "#,
+            user_id,
+            admin,
+            profile.email_address.as_deref(),
+            profile.name.as_deref(),
         )
-        .bind(user_id)
-        .bind(admin)
-        .bind(&profile.email_address)
-        .bind(&profile.name)
         .execute(&mut *transaction)
         .await?;
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE local_user_profiles
             SET avatar_url = $2,
@@ -118,39 +99,40 @@ pub async fn sync_oidc_user(
                 updated_at = now()
             WHERE user_id = $1
             "#,
+            user_id,
+            &profile.avatar_url,
+            profile.name.as_deref(),
+            profile.email_address.as_deref(),
         )
-        .bind(user_id)
-        .bind(&profile.avatar_url)
-        .bind(&profile.name)
-        .bind(&profile.email_address)
         .execute(&mut *transaction)
         .await?;
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE local_oidc_identities
             SET updated_at = now()
             WHERE issuer = $1 AND subject = $2
             "#,
+            &profile.issuer,
+            &profile.subject,
         )
-        .bind(&profile.issuer)
-        .bind(&profile.subject)
         .execute(&mut *transaction)
         .await?;
         user_id
     } else {
-        let (user_id, metrics_id) = sqlx::query_as::<_, (i32, Uuid)>(
+        let inserted = sqlx::query!(
             r#"
             INSERT INTO users (admin, email_address, connected_once, name)
             VALUES ($1, $2, false, $3)
             RETURNING id, metrics_id
             "#,
+            admin,
+            profile.email_address.as_deref(),
+            profile.name.as_deref(),
         )
-        .bind(admin)
-        .bind(&profile.email_address)
-        .bind(&profile.name)
         .fetch_one(&mut *transaction)
         .await?;
+        let (user_id, metrics_id) = (inserted.id, inserted.metrics_id);
 
         let username = normalized_username(
             profile
@@ -164,14 +146,16 @@ pub async fn sync_oidc_user(
                 })
                 .unwrap_or("user"),
         );
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext(lower($1)))")
-            .bind(&username)
-            .execute(&mut *transaction)
-            .await?;
-        let username_taken = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM local_user_profiles WHERE lower(github_login) = lower($1))",
+        sqlx::query!(
+            "SELECT pg_advisory_xact_lock(hashtext(lower($1)))",
+            &username
         )
-        .bind(&username)
+        .execute(&mut *transaction)
+        .await?;
+        let username_taken = sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM local_user_profiles WHERE lower(github_login) = lower($1)) AS "exists!""#,
+            &username,
+        )
         .fetch_one(&mut *transaction)
         .await?;
         let username = if username_taken {
@@ -180,7 +164,7 @@ pub async fn sync_oidc_user(
             username
         };
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO local_user_profiles (
                 user_id,
@@ -193,31 +177,31 @@ pub async fn sync_oidc_user(
             )
             VALUES ($1, $2, $3, $4, $5, $6, false)
             "#,
+            user_id,
+            username,
+            &profile.avatar_url,
+            profile.name.as_deref(),
+            profile.email_address.as_deref(),
+            metrics_id,
         )
-        .bind(user_id)
-        .bind(username)
-        .bind(&profile.avatar_url)
-        .bind(&profile.name)
-        .bind(&profile.email_address)
-        .bind(metrics_id)
         .execute(&mut *transaction)
         .await?;
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO local_oidc_identities (issuer, subject, user_id)
             VALUES ($1, $2, $3)
             "#,
+            &profile.issuer,
+            &profile.subject,
+            user_id,
         )
-        .bind(&profile.issuer)
-        .bind(&profile.subject)
-        .bind(user_id)
         .execute(&mut *transaction)
         .await?;
         user_id
     };
 
-    sqlx::query(
+    sqlx::query!(
         r#"
         INSERT INTO local_user_tokens (user_id, access_token_hash)
         VALUES ($1, $2)
@@ -225,9 +209,9 @@ pub async fn sync_oidc_user(
         SET access_token_hash = EXCLUDED.access_token_hash,
             last_validated_at = now()
         "#,
+        user_id,
+        hash_access_token(access_token),
     )
-    .bind(user_id)
-    .bind(hash_access_token(access_token))
     .execute(&mut *transaction)
     .await?;
 
@@ -240,12 +224,13 @@ pub async fn authenticated_user(
     user_id: i32,
     access_token: &str,
 ) -> sqlx::Result<Option<AuthenticatedLocalUser>> {
-    sqlx::query_as(
+    sqlx::query_as!(
+        AuthenticatedLocalUser,
         r#"
         SELECT
             profiles.user_id,
-            'local-' || profiles.user_id::text AS stable_id,
-            profiles.github_login AS username,
+            'local-' || profiles.user_id::text AS "stable_id!",
+            profiles.github_login AS "username!",
             profiles.github_login,
             profiles.avatar_url,
             profiles.name,
@@ -257,9 +242,9 @@ pub async fn authenticated_user(
         JOIN users ON users.id = profiles.user_id
         WHERE tokens.user_id = $1 AND tokens.access_token_hash = $2
         "#,
+        user_id,
+        hash_access_token(access_token),
     )
-    .bind(user_id)
-    .bind(hash_access_token(access_token))
     .fetch_optional(database)
     .await
 }
@@ -269,183 +254,29 @@ pub async fn cached_token_is_valid(
     user_id: i32,
     access_token: &str,
 ) -> sqlx::Result<bool> {
-    sqlx::query_scalar::<_, bool>(
+    sqlx::query_scalar!(
         r#"
         SELECT EXISTS(
             SELECT 1
             FROM local_user_tokens
             WHERE user_id = $1 AND access_token_hash = $2
-        )
+        ) AS "exists!"
         "#,
+        user_id,
+        hash_access_token(access_token),
     )
-    .bind(user_id)
-    .bind(hash_access_token(access_token))
     .fetch_one(database)
     .await
 }
 
-pub async fn create_login_session(
-    database: &PgPool,
-    token_hash: &[u8],
-    native_app_port: u16,
-    native_app_public_key: &str,
-    expires_at_epoch: i64,
-) -> sqlx::Result<()> {
-    let mut transaction = database.begin().await?;
-    sqlx::query(
-        "DELETE FROM local_login_sessions WHERE expires_at_epoch <= extract(epoch FROM now())::bigint",
-    )
-    .execute(&mut *transaction)
-    .await?;
-    sqlx::query(
-        r#"
-        INSERT INTO local_login_sessions (
-            token_hash,
-            native_app_port,
-            native_app_public_key,
-            expires_at_epoch
-        )
-        VALUES ($1, $2, $3, $4)
-        "#,
-    )
-    .bind(token_hash)
-    .bind(i32::from(native_app_port))
-    .bind(native_app_public_key)
-    .bind(expires_at_epoch)
-    .execute(&mut *transaction)
-    .await?;
-    transaction.commit().await
-}
-
-pub async fn delete_login_session(database: &PgPool, token_hash: &[u8]) -> sqlx::Result<()> {
-    sqlx::query("DELETE FROM local_login_sessions WHERE token_hash = $1")
-        .bind(token_hash)
-        .execute(database)
-        .await?;
-    Ok(())
-}
-
-pub async fn refresh_browser_session(
-    database: &PgPool,
-    token_hash: &[u8],
-    expires_at: SystemTime,
-) -> sqlx::Result<Option<i32>> {
-    let mut transaction = database.begin().await?;
-    sqlx::query("DELETE FROM local_browser_sessions WHERE expires_at <= now()")
-        .execute(&mut *transaction)
-        .await?;
-    let user_id = sqlx::query_scalar(
-        r#"
-        UPDATE local_browser_sessions
-        SET expires_at = $2,
-            updated_at = now()
-        WHERE token_hash = $1
-        RETURNING user_id
-        "#,
-    )
-    .bind(token_hash)
-    .bind(OffsetDateTime::from(expires_at))
-    .fetch_optional(&mut *transaction)
-    .await?;
-    transaction.commit().await?;
-    Ok(user_id)
-}
-
-pub async fn replace_browser_session(
-    database: &PgPool,
-    old_token_hash: &[u8],
-    new_token_hash: &[u8],
-    user_id: i32,
-    expires_at: SystemTime,
-) -> sqlx::Result<()> {
-    let mut transaction = database.begin().await?;
-    sqlx::query(
-        r#"
-        DELETE FROM local_browser_sessions
-        WHERE token_hash = $1
-           OR expires_at <= now()
-        "#,
-    )
-    .bind(old_token_hash)
-    .execute(&mut *transaction)
-    .await?;
-    sqlx::query(
-        r#"
-        INSERT INTO local_browser_sessions (
-            token_hash,
-            user_id,
-            expires_at
-        )
-        VALUES ($1, $2, $3)
-        "#,
-    )
-    .bind(new_token_hash)
-    .bind(user_id)
-    .bind(OffsetDateTime::from(expires_at))
-    .execute(&mut *transaction)
-    .await?;
-    transaction.commit().await
-}
-
-pub async fn start_oidc_login(
-    database: &PgPool,
-    token_hash: &[u8],
-    oidc_state_hash: &[u8],
-    oidc_nonce: &str,
-    oidc_pkce_verifier: &str,
-) -> sqlx::Result<bool> {
-    let result = sqlx::query(
-        r#"
-        UPDATE local_login_sessions
-        SET oidc_state_hash = $2,
-            oidc_nonce = $3,
-            oidc_pkce_verifier = $4
-        WHERE token_hash = $1
-          AND expires_at_epoch > extract(epoch FROM now())::bigint
-        "#,
-    )
-    .bind(token_hash)
-    .bind(oidc_state_hash)
-    .bind(oidc_nonce)
-    .bind(oidc_pkce_verifier)
-    .execute(database)
-    .await?;
-    Ok(result.rows_affected() == 1)
-}
-
-pub async fn consume_oidc_login(
-    database: &PgPool,
-    token_hash: &[u8],
-    oidc_state_hash: &[u8],
-) -> sqlx::Result<Option<LoginSession>> {
-    sqlx::query_as(
-        r#"
-        DELETE FROM local_login_sessions
-        WHERE token_hash = $1
-          AND oidc_state_hash = $2
-          AND oidc_nonce IS NOT NULL
-          AND oidc_pkce_verifier IS NOT NULL
-          AND expires_at_epoch > extract(epoch FROM now())::bigint
-        RETURNING
-            native_app_port,
-            native_app_public_key,
-            oidc_nonce,
-            oidc_pkce_verifier
-        "#,
-    )
-    .bind(token_hash)
-    .bind(oidc_state_hash)
-    .fetch_optional(database)
-    .await
-}
-
 pub async fn users_by_ids(database: &PgPool, user_ids: &[i32]) -> sqlx::Result<Vec<LocalUser>> {
-    sqlx::query_as(
+    sqlx::query_as!(
+        LocalUser,
         r#"
         SELECT
             profiles.user_id,
-            'local-' || profiles.user_id::text AS stable_id,
-            profiles.github_login AS username,
+            'local-' || profiles.user_id::text AS "stable_id!",
+            profiles.github_login AS "username!",
             profiles.github_login,
             profiles.avatar_url,
             profiles.name,
@@ -456,8 +287,8 @@ pub async fn users_by_ids(database: &PgPool, user_ids: &[i32]) -> sqlx::Result<V
         JOIN users ON users.id = profiles.user_id
         ORDER BY requested.position
         "#,
+        user_ids,
     )
-    .bind(user_ids)
     .fetch_all(database)
     .await
 }
@@ -466,12 +297,13 @@ pub async fn user_by_github_login(
     database: &PgPool,
     github_login: &str,
 ) -> sqlx::Result<Option<LocalUser>> {
-    sqlx::query_as(
+    sqlx::query_as!(
+        LocalUser,
         r#"
         SELECT
             profiles.user_id,
-            'local-' || profiles.user_id::text AS stable_id,
-            profiles.github_login AS username,
+            'local-' || profiles.user_id::text AS "stable_id!",
+            profiles.github_login AS "username!",
             profiles.github_login,
             profiles.avatar_url,
             profiles.name,
@@ -481,8 +313,8 @@ pub async fn user_by_github_login(
         JOIN users ON users.id = profiles.user_id
         WHERE lower(profiles.github_login) = lower($1)
         "#,
+        github_login,
     )
-    .bind(github_login)
     .fetch_optional(database)
     .await
 }
@@ -492,12 +324,13 @@ pub async fn fuzzy_search_users(
     query: &str,
     limit: i64,
 ) -> sqlx::Result<Vec<LocalUser>> {
-    sqlx::query_as(
+    sqlx::query_as!(
+        LocalUser,
         r#"
         SELECT
             profiles.user_id,
-            'local-' || profiles.user_id::text AS stable_id,
-            profiles.github_login AS username,
+            'local-' || profiles.user_id::text AS "stable_id!",
+            profiles.github_login AS "username!",
             profiles.github_login,
             profiles.avatar_url,
             profiles.name,
@@ -514,9 +347,9 @@ pub async fn fuzzy_search_users(
             lower(profiles.github_login)
         LIMIT $2
         "#,
+        query,
+        limit,
     )
-    .bind(query)
-    .bind(limit)
     .fetch_all(database)
     .await
 }
@@ -527,12 +360,13 @@ pub async fn fuzzy_search_channel_members(
     query: &str,
     limit: i64,
 ) -> sqlx::Result<Vec<ChannelMemberUser>> {
-    sqlx::query_as(
+    sqlx::query_as!(
+        ChannelMemberUser,
         r#"
         SELECT
             profiles.user_id,
-            'local-' || profiles.user_id::text AS stable_id,
-            profiles.github_login AS username,
+            'local-' || profiles.user_id::text AS "stable_id!",
+            profiles.github_login AS "username!",
             profiles.github_login,
             profiles.avatar_url,
             profiles.name,
@@ -555,10 +389,10 @@ pub async fn fuzzy_search_channel_members(
             lower(profiles.github_login)
         LIMIT $3
         "#,
+        channel_id,
+        query,
+        limit,
     )
-    .bind(channel_id)
-    .bind(query)
-    .bind(limit)
     .fetch_all(database)
     .await
 }

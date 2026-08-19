@@ -8,33 +8,23 @@
   inherit (lib.meta) getExe;
   inherit (lib.modules) mkIf;
   inherit (lib.options) mkEnableOption mkOption mkPackageOption;
-  inherit (lib.types) bool int listOf nullOr port str;
+  inherit (lib.types) bool int listOf port str;
 
   cfg = config.services.zed-local-cloud;
 
-  localCloudConfig = (pkgs.formats.toml {}).generate "zed-local-cloud.toml" (
-    {
-      base_url = cfg.virtualHost;
-      bind_address = "127.0.0.1:${toString cfg.port}";
-      database_url = cfg.database.url;
-      internal_api_key_file = "/var/lib/zed/internal-api-key";
-      log_level = cfg.logLevel;
-      oidc =
-        {
-          admin_claim = cfg.oidc.adminClaim;
-          admin_value = cfg.oidc.adminValue;
-          client_id = cfg.oidc.clientId;
-          issuer_url = cfg.oidc.issuerUrl;
-          scopes = cfg.oidc.scopes;
-        }
-        // lib.optionalAttrs (cfg.oidc.clientSecretFile != null) {
-          client_secret_file = "/run/credentials/zed-local-cloud.service/oidc-client-secret";
-        };
-    }
-    // lib.optionalAttrs (cfg.browserSessionLifetimeSeconds != null) {
-      browser_session_lifetime_seconds = cfg.browserSessionLifetimeSeconds;
-    }
-  );
+  localCloudConfig = (pkgs.formats.toml {}).generate "zed-local-cloud.toml" {
+    base_url = "https://${cfg.virtualHost}";
+    bind_address = "127.0.0.1:${toString cfg.port}";
+    database_url = cfg.database.url;
+    log_level = cfg.logLevel;
+    oidc = {
+      admin_claim = cfg.oidc.adminClaim;
+      admin_value = cfg.oidc.adminValue;
+      client_id = cfg.oidc.clientId;
+      issuer_url = cfg.oidc.issuerUrl;
+      scopes = cfg.oidc.scopes;
+    };
+  };
 
   collabEnvironment = (pkgs.formats.toml {}).generate "zed-collab.toml" {
     DATABASE_URL = cfg.database.url;
@@ -43,7 +33,7 @@
     LOG_JSON = cfg.collab.logJson;
     RUST_LOG = cfg.collab.logLevel;
     ZED_CLIENT_CHECKSUM_SEED = cfg.collab.clientChecksumSeed;
-    ZED_CLOUD_URL = "http://127.0.0.1:${toString cfg.port}";
+    ZED_CLOUD_URL = cfg.collab.cloudUrl;
     ZED_ENVIRONMENT = "production";
   };
 
@@ -98,11 +88,10 @@ in {
       description = "Public host used as the Caddy virtual host and OIDC callback authority.";
     };
 
-    browserSessionLifetimeSeconds = mkOption {
-      type = nullOr int;
-      default = null;
-      example = 2592000;
-      description = "Browser authentication session lifetime in seconds. A null value uses the local cloud default.";
+    localCloud.enable = mkOption {
+      type = bool;
+      default = true;
+      description = "Whether to run the packaged local cloud service. Disable this for host-side development.";
     };
 
     upstreamApiUrl = mkOption {
@@ -125,10 +114,9 @@ in {
       };
 
       clientSecretFile = mkOption {
-        type = nullOr str;
-        default = null;
+        type = str;
         example = "/run/secrets/zed-oidc-client-secret";
-        description = "File that contains the OIDC client secret. Use null for a public client.";
+        description = "File that contains the OIDC client secret.";
       };
 
       scopes = mkOption {
@@ -163,6 +151,12 @@ in {
         type = port;
         default = 8080;
         description = "Port on which the local collab server listens.";
+      };
+
+      cloudUrl = mkOption {
+        type = str;
+        default = "http://127.0.0.1:${toString cfg.port}";
+        description = "Local cloud URL used by the collaboration server.";
       };
 
       databaseMaxConnections = mkOption {
@@ -214,10 +208,6 @@ in {
   config = mkIf cfg.enable {
     assertions = [
       {
-        assertion = cfg.browserSessionLifetimeSeconds == null || cfg.browserSessionLifetimeSeconds > 0;
-        message = "services.zed-local-cloud.browserSessionLifetimeSeconds must be positive when set.";
-      }
-      {
         assertion = cfg.collab.databaseMaxConnections > 0;
         message = "services.zed-local-cloud.collab.databaseMaxConnections must be positive.";
       }
@@ -264,20 +254,22 @@ in {
               header_up Host {upstream_hostport}
             }
           }
+          ${lib.optionalString cfg.localCloud.enable ''
           handle {
             reverse_proxy 127.0.0.1:${toString cfg.port}
           }
+        ''}
         }
       '';
     };
 
     systemd.services = {
       caddy = {
-        wants = ["zed-local-cloud.service" "zed-collab.service"];
-        after = ["zed-local-cloud.service" "zed-collab.service"];
+        wants = ["zed-collab.service"] ++ optional cfg.localCloud.enable "zed-local-cloud.service";
+        after = ["zed-collab.service"] ++ optional cfg.localCloud.enable "zed-local-cloud.service";
       };
 
-      zed-local-cloud = {
+      zed-local-cloud = mkIf cfg.localCloud.enable {
         description = "Zed local cloud service";
         wantedBy = ["multi-user.target"];
         requires = ["zed-setup.service"];
@@ -293,17 +285,18 @@ in {
             StateDirectory = "zed";
             StateDirectoryMode = "0700";
             User = cfg.user;
-          }
-          // lib.optionalAttrs (cfg.oidc.clientSecretFile != null) {
-            LoadCredential = ["oidc-client-secret:${toString cfg.oidc.clientSecretFile}"];
+            LoadCredential = [
+              "internal-api-key:/var/lib/zed/internal-api-key"
+              "oidc-client-secret:${toString cfg.oidc.clientSecretFile}"
+            ];
           };
       };
 
       zed-collab = {
         description = "Zed collaboration server";
         wantedBy = ["multi-user.target"];
-        requires = ["zed-local-cloud.service" "zed-setup.service"];
-        after = ["zed-local-cloud.service" "zed-setup.service"];
+        requires = ["zed-setup.service"] ++ optional cfg.localCloud.enable "zed-local-cloud.service";
+        after = ["zed-setup.service"] ++ optional cfg.localCloud.enable "zed-local-cloud.service";
 
         preStart = ''
           mkdir -p "$RUNTIME_DIRECTORY/crates/collab"
@@ -333,7 +326,7 @@ in {
         description = "Initialize the local Zed services";
         requires = postgresqlDependencies;
         after = postgresqlDependencies;
-        before = ["zed-local-cloud.service" "zed-collab.service"];
+        before = ["zed-collab.service"] ++ optional cfg.localCloud.enable "zed-local-cloud.service";
 
         environment.DATABASE_URL = lib.replaceStrings ["%"] ["%%"] cfg.database.url;
 

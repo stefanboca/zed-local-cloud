@@ -3,5 +3,5 @@
 /result
 /result-*
 
-.env
 .env.fish
+nixos.qcow2

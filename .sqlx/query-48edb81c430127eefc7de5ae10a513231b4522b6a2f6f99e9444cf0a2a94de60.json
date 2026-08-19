@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO local_user_profiles (\n                user_id,\n                github_login,\n                avatar_url,\n                name,\n                email_address,\n                metrics_id,\n                upstream_is_staff\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, false)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "48edb81c430127eefc7de5ae10a513231b4522b6a2f6f99e9444cf0a2a94de60"
+}

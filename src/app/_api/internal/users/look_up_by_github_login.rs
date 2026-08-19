@@ -1,15 +1,12 @@
 use serde::{Deserialize, Serialize};
 use topcoat::{
     Result,
-    context::Cx,
-    router::{content::Json, error::internal_server_error, headers, route},
+    context::{Cx, app_context},
+    router::{content::Json, error::internal_server_error, route},
 };
 
-use super::super::validate_internal_api_key;
-use crate::{
-    app::production_state,
-    store::{self, LocalUser},
-};
+use super::super::require_internal_api;
+use crate::database::{Database, LocalUser};
 
 topcoat::router::segment!(rename = "look_up_by_github_login");
 
@@ -28,9 +25,9 @@ async fn look_up_user_by_github_login(
     cx: &Cx,
     Json(body): Json<LookUpUserByGithubLoginBody>,
 ) -> Result<Json<UserResponse>> {
-    let state = production_state(cx)?;
-    validate_internal_api_key(state, headers(cx))?;
-    let user = store::user_by_github_login(&state.database, &body.github_login)
+    require_internal_api(cx)?;
+    let user = app_context::<Database>(cx)
+        .user_by_github_login(&body.github_login)
         .await
         .map_err(|error| internal("failed to look up a user", error))?;
     Ok(Json(UserResponse { user }))

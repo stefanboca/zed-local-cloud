@@ -4,12 +4,9 @@ use topcoat::{
     router::{StatusCode, route},
 };
 
-use super::super::validate_cached_credentials;
-
 topcoat::router::segment!(kind = CatchAll, rename = "path");
 
 #[route(POST)]
-async fn ignore_feedback(cx: &Cx) -> Result<StatusCode> {
-    validate_cached_credentials(cx).await?;
+async fn ignore_feedback(_cx: &Cx) -> Result<StatusCode> {
     Ok(StatusCode::NO_CONTENT)
 }

@@ -3,14 +3,16 @@ mod users;
 
 use topcoat::{
     Result,
-    router::{HeaderMap, error::unauthorized, header},
+    context::{Cx, app_context},
+    router::{error::unauthorized, header, request::headers},
 };
 
-use crate::app::AppState;
+use crate::config::InternalApiKey;
 
-pub(super) fn validate_internal_api_key(state: &AppState, headers: &HeaderMap) -> Result<()> {
-    let expected = format!("Bearer {}", state.config.internal_api_key);
-    let authorized = headers
+pub(super) fn require_internal_api(cx: &Cx) -> Result<()> {
+    let key = app_context::<InternalApiKey>(cx);
+    let expected = format!("Bearer {}", key.0);
+    let authorized = headers(cx)
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value == expected);

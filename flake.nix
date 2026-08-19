@@ -15,7 +15,6 @@
     inherit (nixpkgs) lib;
     inherit (lib.attrsets) genAttrs mapAttrs' nameValuePair;
     inherit (lib.meta) getExe;
-    inherit (lib.strings) makeLibraryPath;
 
     systems = ["x86_64-linux" "aarch64-linux"];
     forAllSystems = genAttrs systems;
@@ -25,6 +24,16 @@
         overlays = [self.overlays.default];
       });
     treefmtFor = forAllSystems (system: treefmt-nix.lib.evalModule nixpkgsFor.${system} ./treefmt.nix);
+    devBackendFor = forAllSystems (system:
+      lib.nixosSystem {
+        inherit system;
+        modules = [
+          (import ./dev/vm.nix {
+            module = self.nixosModules.default;
+            overlay = self.overlays.default;
+          })
+        ];
+      });
   in {
     packages = forAllSystems (system: import ./pkgs nixpkgsFor.${system});
     overlays.default = _: import ./pkgs;
@@ -33,15 +42,20 @@
       default = import ./modules/nixos.nix;
     };
 
+    apps = forAllSystems (system: {
+      default = {
+        type = "app";
+        program = "${devBackendFor.${system}.config.system.build.vm}/bin/run-nixos-vm";
+        meta.description = "Run Zed collaboration, PostgreSQL, and a mock OIDC provider in a development VM";
+      };
+    });
+
     devShells = forAllSystems (system: let
       pkgs = nixpkgsFor.${system};
     in {
       default = pkgs.mkShellNoCC {
-        packages = [pkgs.sqlx-cli pkgs.tailwindcss_4 self.packages.${system}.topcoat-cli];
-        nativeBuildInputs = with pkgs; [pkg-config];
-        buildInputs = with pkgs; [openssl];
+        packages = with pkgs; [sqlx-cli tailwindcss_4 topcoat-cli];
 
-        env.LD_LIBRARY_PATH = makeLibraryPath [pkgs.openssl];
         env.TAILWIND_CLI = getExe pkgs.tailwindcss_4;
       };
     });

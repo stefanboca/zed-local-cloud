@@ -5,15 +5,16 @@ mod users;
 
 use topcoat::{
     Result,
-    context::Cx,
+    context::{Cx, app_context},
     router::{
         HeaderMap,
         error::{internal_server_error, unauthorized},
-        header, headers,
+        header,
+        request::headers,
     },
 };
 
-use crate::{app::production_state, store};
+use crate::database::Database;
 
 #[derive(Debug)]
 pub(super) struct Credentials {
@@ -51,15 +52,12 @@ pub(super) fn parse_authorization_header(headers: &HeaderMap) -> Result<Credenti
 }
 
 pub(super) async fn validate_cached_credentials(cx: &Cx) -> Result<()> {
-    let state = production_state(cx)?;
+    let database = app_context::<Database>(cx);
     let credentials = parse_authorization_header(headers(cx))?;
-    let valid = store::cached_token_is_valid(
-        &state.database,
-        credentials.user_id,
-        &credentials.access_token,
-    )
-    .await
-    .map_err(|error| internal("failed to validate cached credentials", error))?;
+    let valid = database
+        .cached_token_is_valid(credentials.user_id, &credentials.access_token)
+        .await
+        .map_err(|error| internal("failed to validate cached credentials", error))?;
     if !valid {
         return Err(unauthorized().into());
     }

@@ -1,29 +1,35 @@
 use std::{env, path::PathBuf};
 
-use anyhow::{Context as _, bail};
+use anyhow::{anyhow, bail};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
-use zed_local_cloud::{Config, is_topcoat_dev, routes, serve};
+use zed_local_cloud::{Config, Secrets, serve};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    if is_topcoat_dev() {
-        init_tracing("debug")?;
-        topcoat::start(routes().build())
-            .await
-            .context("UI development server failed")
+    let (config, secrets) = if env::var_os("TOPCOAT_DEV_URL").is_some() {
+        (Config::dev(), Secrets::dev())
     } else {
-        let config = Config::from_file(&config_path()?)?;
-        init_tracing(&config.log_level)?;
-        serve(config).await
+        (
+            Config::from_file(&config_path()?)?,
+            Secrets::from_systemd()?,
+        )
+    };
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
+    if env::var_os("JOURNAL_STREAM").is_some() {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_journald::layer()?)
+            .try_init()
+            .map_err(|error| anyhow!("initializing journald tracing: {error}"))?;
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .compact()
+            .try_init()
+            .map_err(|error| anyhow!("initializing terminal tracing: {error}"))?;
     }
-}
-
-fn init_tracing(log_level: &str) -> anyhow::Result<()> {
-    tracing_subscriber::registry()
-        .with(EnvFilter::try_new(log_level).context("log_level is not a valid tracing filter")?)
-        .with(tracing_subscriber::fmt::layer())
-        .try_init()
-        .context("failed to initialize tracing")
+    serve(config, secrets).await
 }
 
 fn config_path() -> anyhow::Result<PathBuf> {
