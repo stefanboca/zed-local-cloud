@@ -150,6 +150,26 @@ The module copies `virtualHost` to the local cloud `base_url`. The local cloud
 sets the scheme to `https` and adds `/auth/oidc/callback`. Register that
 derived URL with the OIDC provider.
 
+LiveKit is enabled by default through the upstream NixOS `services.livekit`
+module. Caddy publishes it at `https://<virtualHost>/livekit`, and the collab
+server receives that public URL plus the matching API key and secret. The
+upstream module's firewall support is enabled by default. Configure ports,
+the RTC IP behavior, Redis, or the package directly under `services.livekit`.
+Set `services.zed-local-cloud.livekit.enable = false` to disable the whole
+integration.
+
+On first start, `zed-setup` runs `livekit-server generate-keys`. It stores the
+key and secret separately in `/var/lib/zed/livekit-api-key` and
+`/var/lib/zed/livekit-api-secret` for collab. It also writes the pair to
+`/var/lib/zed/livekit-keys` because that is the native `key: secret` format
+expected by the upstream LiveKit module. Later runs retain the same pair.
+
+To manage this credential yourself, set `services.livekit.keyFile` to a
+runtime secret path containing one `key: secret` pair. During setup, the
+integration splits that pair into the two private collab credential files.
+LiveKit and collab receive their respective files through systemd credentials;
+nothing is copied into the Nix store.
+
 Systemd loads `clientSecretFile` as the `oidc-client-secret` credential. The
 local cloud reads the raw secret from its private credential directory. The
 TOML configuration does not contain the secret or its path. The service uses
@@ -169,8 +189,9 @@ the same non-empty file. The file mode is `0600`. The module loads this file
 as the `internal-api-key` systemd credential. The generated TOML configuration
 does not contain the key or its path.
 
-Each secret has a separate file. Each secret file contains only the raw
-secret. Do not use TOML syntax in a secret file.
+The OIDC and internal API secrets each have a separate raw-value file. Do not
+use TOML syntax in either file. An externally managed LiveKit key file instead
+uses LiveKit's `key: secret` format described above.
 
 The setup service applies the collaboration schema. The local cloud applies
 its embedded migrations before it starts its HTTP listener.

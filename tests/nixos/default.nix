@@ -57,12 +57,14 @@
           "zed-setup.service",
           "zed-local-cloud.service",
           "zed-collab.service",
+          "livekit.service",
           "caddy.service",
       ]:
           machine.wait_for_unit(unit)
 
       machine.wait_for_open_port(443)
       machine.wait_for_open_port(8787)
+      machine.wait_for_open_port(7880)
 
       failed_units = machine.succeed(
           "systemctl list-units --state=failed --no-legend --plain"
@@ -92,8 +94,23 @@
       assert machine.succeed(
           "stat --format='%U:%G %a' /var/lib/zed/internal-api-key"
       ).strip() == "zed:zed 600"
+      assert machine.succeed(
+          "stat --format='%U:%G %a' /var/lib/zed/livekit-keys"
+      ).strip() == "zed:zed 600"
+      for livekit_credential in ["livekit-api-key", "livekit-api-secret"]:
+          assert machine.succeed(
+              "stat --format='%U:%G %a' "
+              f"/var/lib/zed/{livekit_credential}"
+          ).strip() == "zed:zed 600"
       key = machine.succeed("cat /var/lib/zed/internal-api-key")
       assert len(base64.b64decode(key, validate=True)) == 128
+      livekit_key = machine.succeed("cat /var/lib/zed/livekit-api-key")
+      livekit_secret = machine.succeed("cat /var/lib/zed/livekit-api-secret")
+      assert len(livekit_key) >= 12
+      assert len(livekit_secret) >= 32
+      assert machine.succeed(
+          "cat /var/lib/zed/livekit-keys"
+      ) == f"{livekit_key}: {livekit_secret}\n"
 
       auth_environment = machine.succeed(
           "systemctl show zed-local-cloud.service --property=Environment --value"
@@ -141,17 +158,35 @@
       )
       assert collab_environment["ZED_CLOUD_URL"] == "http://127.0.0.1:8787"
       assert collab_environment["ZED_ENVIRONMENT"] == "production"
+      assert collab_environment["LIVEKIT_SERVER"] == "https://localhost/livekit"
       collab_secret = tomllib.loads(
           machine.succeed(
               "cat /run/zed-collab/crates/collab/.env.secret.toml"
           )
       )
-      assert collab_secret == {"ZED_CLOUD_INTERNAL_API_KEY": key}
+      assert collab_secret == {
+          "ZED_CLOUD_INTERNAL_API_KEY": key,
+          "LIVEKIT_KEY": livekit_key,
+          "LIVEKIT_SECRET": livekit_secret,
+      }
+      assert machine.succeed(
+          "cat /run/credentials/livekit.service/livekit-secrets"
+      ) == f"{livekit_key}: {livekit_secret}\n"
+      assert machine.succeed(
+          "cat /run/credentials/zed-collab.service/livekit-api-key"
+      ) == livekit_key
+      assert machine.succeed(
+          "cat /run/credentials/zed-collab.service/livekit-api-secret"
+      ) == livekit_secret
 
       machine.succeed("systemctl restart zed-setup.service")
       assert machine.succeed(
           "cat /var/lib/zed/internal-api-key"
       ) == key
+      assert machine.succeed("cat /var/lib/zed/livekit-api-key") == livekit_key
+      assert machine.succeed(
+          "cat /var/lib/zed/livekit-api-secret"
+      ) == livekit_secret
 
       migrations = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
@@ -191,6 +226,7 @@
           ).strip()
 
       assert response("/healthz") == "204"
+      assert response("/livekit/").startswith("200"), response("/livekit/")
       assert machine.succeed(
           "curl --silent --show-error --output /dev/null "
           "--write-out='%{http_code}' http://127.0.0.1:8787/healthz"
