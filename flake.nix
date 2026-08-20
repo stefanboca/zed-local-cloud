@@ -67,10 +67,7 @@
       devShells = mapAttrs' (n: nameValuePair "devShell-${n}") self.devShells.${system};
       formatting = {formatting = treefmtFor.${system}.config.build.check self;};
       nixos = import ./tests/nixos {
-        inherit pkgs;
-        module = self.nixosModules.default;
-        zedLocalCloudPackage = self.packages.${system}.zed-local-cloud;
-        zedCollabPackage = self.packages.${system}.zed-collab;
+        inherit self pkgs;
       };
     in
       packages // devShells // formatting // nixos);

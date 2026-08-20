@@ -1,8 +1,6 @@
 {
   module,
   pkgs,
-  zedLocalCloudPackage,
-  zedCollabPackage,
 }: {
   nixos-basic = pkgs.testers.runNixOSTest {
     name = "zed-local-cloud-basic";
@@ -15,10 +13,8 @@
 
       services.zed-local-cloud = {
         enable = true;
-        package = zedLocalCloudPackage;
         virtualHost = "localhost";
         upstreamApiUrl = "http://127.0.0.1:18081";
-        collab.package = zedCollabPackage;
         oidc = {
           adminClaim = "groups";
           adminValue = "zed-admin";

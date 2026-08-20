@@ -129,13 +129,13 @@ in {
 
       scopes = mkOption {
         type = listOf str;
-        default = ["profile" "email"];
+        default = ["profile" "email" "groups"];
         description = "OIDC scopes in addition to the required openid scope.";
       };
 
       adminClaim = mkOption {
         type = str;
-        default = "roles";
+        default = "groups";
         description = "OIDC claim that contains the administrator value. Dot notation selects nested claims.";
       };
 

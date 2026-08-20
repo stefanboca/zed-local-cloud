@@ -106,11 +106,15 @@ fn default_log_level() -> String {
 }
 
 fn default_oidc_scopes() -> Vec<String> {
-    vec!["profile".to_owned(), "email".to_owned()]
+    vec![
+        "profile".to_owned(),
+        "email".to_owned(),
+        "groups".to_owned(),
+    ]
 }
 
 fn default_admin_claim() -> String {
-    "roles".to_owned()
+    "groups".to_owned()
 }
 
 fn default_admin_value() -> String {
@@ -141,6 +145,24 @@ mod tests {
         assert_eq!(config.base_url.as_str(), "https://zed.example.com/");
         assert_eq!(config.oidc.client_id, "zed-local");
         assert_eq!(config.oidc.scopes, ["profile", "email", "groups"]);
+    }
+
+    #[test]
+    fn defaults_admin_access_to_the_admin_group() {
+        let config: Config = toml::from_str(
+            r#"
+            base_url = "https://zed.example.com"
+
+            [oidc]
+            issuer_url = "https://auth.example.com"
+            client_id = "zed-local"
+        "#,
+        )
+        .expect("valid config");
+
+        assert_eq!(config.oidc.scopes, ["profile", "email", "groups"]);
+        assert_eq!(config.oidc.admin_claim, "groups");
+        assert_eq!(config.oidc.admin_value, "admin");
     }
 
     #[test]

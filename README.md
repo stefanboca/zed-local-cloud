@@ -92,8 +92,9 @@ UserInfo value has priority over the same ID-token value.
 The `picture` claim is optional. If it is not present, `avatar_url` is an
 empty string.
 
-The administrator claim is configurable. A string value or an array value is
-valid. Dot notation selects a nested claim. For example,
+The administrator claim defaults to `groups`, which is requested through the
+default `groups` scope. A string value or an array value is valid. Dot notation
+selects a nested claim. For example,
 `realm_access.roles` selects the `roles` member of `realm_access`.
 
 The local cloud checks the administrator claim after each successful login.
@@ -408,8 +409,8 @@ systemd credentials. `RUST_LOG` can override the configured tracing filter.
 | `log_level` | `zed_local_cloud=info,sqlx=warn` | Set the tracing filter |
 | `oidc.issuer_url` | Required | Set the OIDC issuer URL |
 | `oidc.client_id` | Required | Set the OIDC client identifier |
-| `oidc.scopes` | `profile`, `email` | Set the additional OIDC scopes |
-| `oidc.admin_claim` | `roles` | Set the administrator claim path |
+| `oidc.scopes` | `profile`, `email`, `groups` | Set the additional OIDC scopes |
+| `oidc.admin_claim` | `groups` | Set the administrator claim path |
 | `oidc.admin_value` | `admin` | Set the administrator claim value |
 
 Do not put secret values in the TOML file. The service requires the systemd
