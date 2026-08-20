@@ -108,6 +108,12 @@ in {
       description = "Upstream origin used for extension API routes.";
     };
 
+    upstreamCloudUrl = mkOption {
+      type = str;
+      default = "https://cloud.zed.dev";
+      description = "Upstream origin used for release and cloud routes.";
+    };
+
     oidc = {
       issuerUrl = mkOption {
         type = str;
@@ -271,13 +277,17 @@ in {
             rewrite * /rpc
             reverse_proxy 127.0.0.1:${toString cfg.collab.port}
           }
-          @extensions path /extensions /extensions/*
-          handle @extensions {
+          @upstreamApi path /extensions /extensions/*
+          handle @upstreamApi {
             reverse_proxy ${cfg.upstreamApiUrl} {
               header_up -Authorization
               header_up -Cookie
               header_up Host {upstream_hostport}
             }
+          }
+          @releases path /releases /releases/*
+          handle @releases {
+            reverse_proxy ${cfg.upstreamCloudUrl}
           }
           ${lib.optionalString cfg.localCloud.enable ''
           handle {

@@ -15,6 +15,7 @@
         enable = true;
         virtualHost = "localhost";
         upstreamApiUrl = "http://127.0.0.1:18081";
+        upstreamCloudUrl = "http://127.0.0.1:18081";
         oidc = {
           adminClaim = "groups";
           adminValue = "zed-admin";
@@ -263,6 +264,19 @@
       assert extension_download["source"] == (
           "fake-extension-upstream"
       ), extension_download
+      release_asset = json.loads(machine.succeed(
+          "curl --insecure --silent --show-error "
+          "'https://localhost/releases/stable/1.15.0/asset?asset=zed-remote-server'"
+      ))
+      assert release_asset["path"] == (
+          "/releases/stable/1.15.0/asset"
+      ), release_asset
+      assert release_asset["query"] == {
+          "asset": ["zed-remote-server"]
+      }, release_asset
+      assert release_asset["source"] == (
+          "fake-extension-upstream"
+      ), release_asset
       assert response("/client/users/me") == "401"
       assert machine.succeed(
           "curl --insecure --silent --show-error --output /dev/null "

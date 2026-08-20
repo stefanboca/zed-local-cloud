@@ -7,8 +7,11 @@ from urllib.parse import parse_qs, urlsplit
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         request = urlsplit(self.path)
-        if request.path != "/extensions" and not request.path.startswith(
-            "/extensions/"
+        if not (
+            request.path == "/extensions"
+            or request.path.startswith("/extensions/")
+            or request.path == "/releases"
+            or request.path.startswith("/releases/")
         ):
             self.send_error(404)
             return

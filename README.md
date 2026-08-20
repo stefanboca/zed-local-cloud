@@ -361,6 +361,7 @@ The NixOS module uses a small Caddy route table:
 | `/rpc` | Redirect to `/actual_rpc` on the same authority |
 | `/actual_rpc` | Local collaboration server `/rpc` |
 | `/extensions` and `/extensions/*` | `https://api.zed.dev` |
+| `/releases` and `/releases/*` | `https://cloud.zed.dev` |
 | All other paths | Local cloud service |
 
 The Rust service supplies `/models`. It returns an empty hosted-model catalog.
