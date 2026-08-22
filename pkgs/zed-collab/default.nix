@@ -39,7 +39,7 @@ rustPlatform.buildRustPackage {
       target/${stdenv.hostPlatform.rust.cargoShortTarget}/release/collab \
       $out/bin/collab
     mkdir -p $out/share/zed-collab
-    cp -r crates/collab/migrations $out/share/zed-collab/migrations
+    cp -r ${../../migrations} $out/share/zed-collab/migrations
 
     runHook postInstall
   '';

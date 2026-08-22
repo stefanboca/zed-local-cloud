@@ -38,6 +38,7 @@
 
     testScript = ''
       import base64
+      import hashlib
       import html
       import json
       import re
@@ -51,9 +52,10 @@
           "postgresql.target",
           "fake-extensions.service",
           "oidc-provider-mock.service",
-          "zed-setup.service",
+          "zed-credentials.service",
           "zed-local-cloud.service",
           "zed-collab.service",
+          "zed.target",
           "livekit.service",
           "caddy.service",
       ]:
@@ -69,7 +71,7 @@
       assert failed_units.strip() == "", failed_units
 
       for unit in [
-          "zed-setup.service",
+          "zed-credentials.service",
           "zed-local-cloud.service",
           "zed-collab.service",
       ]:
@@ -84,6 +86,22 @@
           assert state_directory == "zed", (
               f"{unit} uses state directory {state_directory!r}"
           )
+
+      zed_target_wants = set(machine.succeed(
+          "systemctl show zed.target --property=Wants --value"
+      ).split())
+      assert zed_target_wants == {
+          "zed-credentials.service",
+          "zed-local-cloud.service",
+          "zed-collab.service",
+      }, zed_target_wants
+      assert machine.succeed(
+          "systemctl show zed-local-cloud.service --property=Type --value"
+      ).strip() == "notify"
+      collab_after = set(machine.succeed(
+          "systemctl show zed-collab.service --property=After --value"
+      ).split())
+      assert "zed-local-cloud.service" in collab_after, collab_after
 
       assert machine.succeed(
           "stat --format='%U:%G %a' /var/lib/zed"
@@ -176,7 +194,7 @@
           "cat /run/credentials/zed-collab.service/livekit-api-secret"
       ) == livekit_secret
 
-      machine.succeed("systemctl restart zed-setup.service")
+      machine.succeed("systemctl restart zed-credentials.service")
       assert machine.succeed(
           "cat /var/lib/zed/internal-api-key"
       ) == key
@@ -194,6 +212,15 @@
           "20260724000000",
           "20260806000000",
       ], migrations
+      collab_schema_checksum = machine.succeed(
+          "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
+          "--command=\"SELECT encode(checksum, 'hex') FROM _sqlx_migrations "
+          "WHERE version = 20251208000000\""
+      ).strip()
+      assert collab_schema_checksum == (
+          "9c7061b50bfb256cba83454be75fbed99be601e9214e80ba0bf461d90c346bb2"
+          "ae26ab0d7219aab086b3f9d51d18433d"
+      ), collab_schema_checksum
 
       environments = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
@@ -266,10 +293,10 @@
       ), extension_download
       release_asset = json.loads(machine.succeed(
           "curl --insecure --silent --show-error "
-          "'https://localhost/releases/stable/1.15.0/asset?asset=zed-remote-server'"
+          "'https://localhost/releases/stable/1.16.1/asset?asset=zed-remote-server'"
       ))
       assert release_asset["path"] == (
-          "/releases/stable/1.15.0/asset"
+          "/releases/stable/1.16.1/asset"
       ), release_asset
       assert release_asset["query"] == {
           "asset": ["zed-remote-server"]
@@ -413,6 +440,93 @@
           "--tuples-only --no-align "
           "--command='SELECT count(*) FROM local_oidc_identities'"
       ).strip() == "1"
+
+      known_token = "zed-1.16.1-contract-token"
+      known_token_hash = hashlib.sha256(known_token.encode()).hexdigest()
+      update_token = (
+          "UPDATE local_user_tokens "
+          f"SET access_token_hash = '{known_token_hash}' WHERE user_id = 1"
+      )
+      machine.succeed(
+          "runuser -u postgres -- psql --dbname=zed --set=ON_ERROR_STOP=1 "
+          f"--command={shlex.quote(update_token)}"
+      )
+      authenticated_user = json.loads(machine.succeed(
+          "curl --insecure --silent --show-error "
+          f"--header={shlex.quote(f'Authorization: 1 {known_token}')} "
+          "https://localhost/client/users/me"
+      ))
+      assert authenticated_user["user"] == {
+          "id_v2": "local-1",
+          "legacy_user_id": 1,
+          "metrics_id": authenticated_user["user"]["metrics_id"],
+          "username": "alice",
+          "avatar_url": "",
+          "github_login": "alice",
+          "name": "Alice Developer",
+          "is_staff": False,
+          "accepted_tos_at": None,
+          "has_connected_to_collab_once": False,
+      }, authenticated_user
+      assert authenticated_user["feature_flags"] == [], authenticated_user
+      assert authenticated_user["default_organization_id"] == "local"
+      assert authenticated_user["configuration_by_organization"]["local"][
+          "is_collaboration_enabled"
+      ] is True
+
+      internal_authorization = f"Authorization: Bearer {key}"
+
+      def internal_request(path, body):
+          return json.loads(machine.succeed(
+              "curl --insecure --silent --show-error --request POST "
+              "--header='Content-Type: application/json' "
+              f"--header={shlex.quote(internal_authorization)} "
+              f"--data={shlex.quote(json.dumps(body))} "
+              f"https://localhost{path}"
+          ))
+
+      expected_internal_user = {
+          "id": "local-1",
+          "legacy_user_id": 1,
+          "username": "alice",
+          "github_login": "alice",
+          "avatar_url": "",
+          "name": "Alice Developer",
+          "admin": False,
+          "connected_once": False,
+      }
+      assert internal_request(
+          "/internal/users/look_up_by_legacy_id",
+          {"legacy_user_ids": [1, 999]},
+      ) == {"users": [expected_internal_user]}
+      assert internal_request(
+          "/internal/users/look_up_by_github_login",
+          {"github_login": "ALICE"},
+      ) == {"user": expected_internal_user}
+      assert internal_request(
+          "/internal/users/fuzzy_search",
+          {"query": "lic", "limit": 10},
+      ) == {"users": [expected_internal_user]}
+
+      machine.succeed(
+          "runuser -u postgres -- psql --dbname=zed --set=ON_ERROR_STOP=1 "
+          "--command=\"INSERT INTO channels (id, name, parent_path) "
+          "VALUES (900001, 'contract-test', 'root'); "
+          "INSERT INTO channel_members "
+          "(channel_id, user_id, accepted, role) "
+          "VALUES (900001, 1, true, 'member')\""
+      )
+      assert internal_request(
+          "/internal/channel_members/fuzzy_search",
+          {"channel_id": 900001, "query": "ali", "limit": 10},
+      ) == {
+          "channel_members": [{
+              "legacy_user_id": 1,
+              "kind": "member",
+              "role": "member",
+          }],
+          "users": [expected_internal_user],
+      }
     '';
   };
 }

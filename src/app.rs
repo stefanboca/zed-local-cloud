@@ -51,10 +51,43 @@ pub async fn serve(config: Config, secrets: Secrets) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(bind_address)
         .await
         .with_context(|| format!("failed to bind {bind_address}"))?;
+    notify_systemd_ready().context("failed to notify systemd that the service is ready")?;
     tracing::info!(%bind_address, "Zed local cloud listening");
     topcoat::serve(listener, router)
         .await
         .context("HTTP server failed")
+}
+
+#[cfg(target_os = "linux")]
+fn notify_systemd_ready() -> std::io::Result<()> {
+    use std::{
+        env,
+        os::{
+            linux::net::SocketAddrExt as _,
+            unix::{ffi::OsStrExt as _, net::UnixDatagram},
+        },
+    };
+
+    let Some(address) = env::var_os("NOTIFY_SOCKET") else {
+        return Ok(());
+    };
+    let address = address.as_os_str().as_bytes();
+    let socket = UnixDatagram::unbound()?;
+    if let Some(abstract_name) = address.strip_prefix(b"@") {
+        let address = std::os::unix::net::SocketAddr::from_abstract_name(abstract_name)?;
+        socket.send_to_addr(b"READY=1", &address)?;
+    } else {
+        socket.send_to(
+            b"READY=1",
+            std::path::Path::new(std::ffi::OsStr::from_bytes(address)),
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn notify_systemd_ready() -> std::io::Result<()> {
+    Ok(())
 }
 
 fn cookie_key(internal_api_key: &str) -> Key {

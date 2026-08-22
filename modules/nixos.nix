@@ -4,10 +4,12 @@
   pkgs,
   ...
 }: let
-  inherit (lib.lists) optional;
-  inherit (lib.meta) getExe;
+  inherit (lib.attrsets) optionalAttrs;
+  inherit (lib.lists) optional optionals;
+  inherit (lib.meta) getExe getExe';
   inherit (lib.modules) mkIf;
   inherit (lib.options) mkEnableOption mkOption mkPackageOption;
+  inherit (lib.strings) escapeShellArg optionalString;
   inherit (lib.types) bool int listOf port str;
 
   cfg = config.services.zed-local-cloud;
@@ -298,6 +300,17 @@ in {
       '';
     };
 
+    systemd.targets.zed = {
+      description = "Local Zed services";
+      wantedBy = ["multi-user.target"];
+      wants =
+        [
+          "zed-credentials.service"
+          "zed-collab.service"
+        ]
+        ++ optional cfg.localCloud.enable "zed-local-cloud.service";
+    };
+
     systemd.services = {
       caddy = {
         wants =
@@ -311,15 +324,14 @@ in {
       };
 
       livekit = mkIf cfg.livekit.enable {
-        requires = ["zed-setup.service"];
-        after = ["zed-setup.service"];
+        requires = ["zed-credentials.service"];
+        after = ["zed-credentials.service"];
       };
 
       zed-local-cloud = mkIf cfg.localCloud.enable {
         description = "Zed local cloud service";
-        wantedBy = ["multi-user.target"];
-        requires = ["zed-setup.service"];
-        after = ["zed-setup.service"];
+        requires = ["zed-credentials.service"] ++ postgresqlDependencies;
+        after = ["zed-credentials.service"] ++ postgresqlDependencies;
 
         serviceConfig =
           hardening
@@ -328,6 +340,8 @@ in {
             Group = cfg.group;
             Restart = "on-failure";
             RestartSec = 5;
+            Type = "notify";
+            NotifyAccess = "main";
             StateDirectory = "zed";
             StateDirectoryMode = "0700";
             User = cfg.user;
@@ -340,24 +354,32 @@ in {
 
       zed-collab = {
         description = "Zed collaboration server";
-        wantedBy = ["multi-user.target"];
         requires =
-          ["zed-setup.service"]
+          ["zed-credentials.service"]
+          ++ optionals (!cfg.localCloud.enable) postgresqlDependencies
           ++ optional cfg.localCloud.enable "zed-local-cloud.service"
           ++ optional cfg.livekit.enable "livekit.service";
         after =
-          ["zed-setup.service"]
+          ["zed-credentials.service"]
+          ++ optionals (!cfg.localCloud.enable) postgresqlDependencies
           ++ optional cfg.localCloud.enable "zed-local-cloud.service"
           ++ optional cfg.livekit.enable "livekit.service";
 
         preStart = ''
+          ${optionalString (!cfg.localCloud.enable) ''
+            ${getExe pkgs.sqlx-cli} migrate run \
+              --ignore-missing \
+              --source ${cfg.collab.package}/share/zed-collab/migrations \
+              --database-url ${escapeShellArg cfg.database.url}
+          ''}
+
           mkdir -p "$RUNTIME_DIRECTORY/crates/collab"
           ln -sf ${collabEnvironment} "$RUNTIME_DIRECTORY/crates/collab/.env.toml"
           cat >"$RUNTIME_DIRECTORY/crates/collab/.env.secret.toml" <<EOF
           ZED_CLOUD_INTERNAL_API_KEY = "$(< "$STATE_DIRECTORY/internal-api-key")"
           EOF
 
-          ${lib.optionalString cfg.livekit.enable ''
+          ${optionalString cfg.livekit.enable ''
             printf 'LIVEKIT_KEY = "%s"\nLIVEKIT_SECRET = "%s"\n' \
               "$(< "$CREDENTIALS_DIRECTORY/livekit-api-key")" \
               "$(< "$CREDENTIALS_DIRECTORY/livekit-api-secret")" \
@@ -379,7 +401,7 @@ in {
             User = cfg.user;
             WorkingDirectory = "%t/zed-collab";
           }
-          // lib.optionalAttrs cfg.livekit.enable {
+          // optionalAttrs cfg.livekit.enable {
             LoadCredential = [
               "livekit-api-key:${livekitApiKeyFile}"
               "livekit-api-secret:${livekitApiSecretFile}"
@@ -387,14 +409,8 @@ in {
           };
       };
 
-      zed-setup = {
-        description = "Initialize the local Zed services";
-        requires = postgresqlDependencies;
-        after = postgresqlDependencies;
-        before = ["zed-collab.service"] ++ optional cfg.localCloud.enable "zed-local-cloud.service";
-
-        environment.DATABASE_URL = lib.replaceStrings ["%"] ["%%"] cfg.database.url;
-
+      zed-credentials = {
+        description = "Initialize the local Zed credentials";
         script = ''
           secret_file="$STATE_DIRECTORY/internal-api-key"
           (
@@ -403,13 +419,13 @@ in {
             if [ ! -s "$secret_file" ]; then
               key="$(
                 ${getExe pkgs.openssl} rand -base64 128 \
-                  | ${lib.getExe' pkgs.coreutils "tr"} -d '\n'
+                  | ${getExe' pkgs.coreutils "tr"} -d '\n'
               )"
               printf '%s' "$key" >"$secret_file"
             fi
           )
 
-          ${lib.optionalString cfg.livekit.enable ''
+          ${optionalString cfg.livekit.enable ''
             (
               set -euo pipefail
               umask 0077
@@ -422,7 +438,7 @@ in {
                 fi
               }
 
-              ${lib.optionalString (livekitKeyFile == generatedLivekitKeyFile) ''
+              ${optionalString (livekitKeyFile == generatedLivekitKeyFile) ''
               if [ ! -s "${livekitApiKeyFile}" ] || [ ! -s "${livekitApiSecretFile}" ]; then
                 generated="$(${getExe config.services.livekit.package} generate-keys)"
                 livekit_key="$(printf '%s\n' "$generated" | sed -n 's/^API Key:[[:space:]]*//p')"
@@ -432,7 +448,7 @@ in {
                 livekit_secret="$(< "${livekitApiSecretFile}")"
               fi
             ''}
-              ${lib.optionalString (livekitKeyFile != generatedLivekitKeyFile) ''
+              ${optionalString (livekitKeyFile != generatedLivekitKeyFile) ''
               livekit_pair="$(sed -n '/^[[:space:]]*\(#\|$\)/!{p;q}' "$CREDENTIALS_DIRECTORY/livekit-keys")"
               split_livekit_pair
             ''}
@@ -444,16 +460,12 @@ in {
 
               printf '%s' "$livekit_key" >"${livekitApiKeyFile}"
               printf '%s' "$livekit_secret" >"${livekitApiSecretFile}"
-              ${lib.optionalString (livekitKeyFile == generatedLivekitKeyFile) ''
+              ${optionalString (livekitKeyFile == generatedLivekitKeyFile) ''
               printf '%s: %s\n' "$livekit_key" "$livekit_secret" >"${generatedLivekitKeyFile}"
             ''}
             )
           ''}
 
-          ${getExe pkgs.sqlx-cli} migrate run \
-            --ignore-missing \
-            --source ${cfg.collab.package}/share/zed-collab/migrations \
-            --database-url "$DATABASE_URL"
         '';
 
         serviceConfig =
@@ -466,7 +478,7 @@ in {
             Type = "oneshot";
             User = cfg.user;
           }
-          // lib.optionalAttrs (cfg.livekit.enable && livekitKeyFile != generatedLivekitKeyFile) {
+          // optionalAttrs (cfg.livekit.enable && livekitKeyFile != generatedLivekitKeyFile) {
             LoadCredential = ["livekit-keys:${livekitKeyFile}"];
           };
       };

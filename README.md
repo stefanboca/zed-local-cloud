@@ -21,9 +21,14 @@ writing rules of ASD-STE100 Simplified Technical English.
 ## Compatibility baseline
 
 The project uses
-[Zed v1.15.0](https://github.com/zed-industries/zed/tree/v1.15.0) as its
+[Zed v1.16.1](https://github.com/zed-industries/zed/tree/v1.16.1) as its
 compatibility baseline. This is the Zed release packaged by the current
 nixpkgs input.
+
+Zed 1.16.1 uses the same required client API and internal collaboration API
+as Zed 1.15.0. It also uses the same collaboration schema. The compatibility
+test checks the authenticated user response and all four internal
+collaboration routes.
 
 The baseline defines these interfaces:
 
@@ -159,8 +164,8 @@ the RTC IP behavior, Redis, or the package directly under `services.livekit`.
 Set `services.zed-local-cloud.livekit.enable = false` to disable the whole
 integration.
 
-On first start, `zed-setup` runs `livekit-server generate-keys`. It stores the
-key and secret separately in `/var/lib/zed/livekit-api-key` and
+On first start, `zed-credentials` runs `livekit-server generate-keys`. It
+stores the key and secret separately in `/var/lib/zed/livekit-api-key` and
 `/var/lib/zed/livekit-api-secret` for collab. It also writes the pair to
 `/var/lib/zed/livekit-keys` because that is the native `key: secret` format
 expected by the upstream LiveKit module. Later runs retain the same pair.
@@ -184,18 +189,21 @@ Set `services.zed-local-cloud.database.createLocally = false` for an external
 database. Then set `services.zed-local-cloud.database.url` to the external
 database URL.
 
-The `zed-setup` service creates a 128-byte internal API key on its first run.
-It writes only the raw key to `/var/lib/zed/internal-api-key`. Later runs keep
-the same non-empty file. The file mode is `0600`. The module loads this file
-as the `internal-api-key` systemd credential. The generated TOML configuration
-does not contain the key or its path.
+The `zed-credentials` service creates a 128-byte internal API key on its first
+run. It writes only the raw key to `/var/lib/zed/internal-api-key`. Later runs
+keep the same non-empty file. The file mode is `0600`. The module loads this
+file as the `internal-api-key` systemd credential. The generated TOML
+configuration does not contain the key or its path.
 
 The OIDC and internal API secrets each have a separate raw-value file. Do not
 use TOML syntax in either file. An externally managed LiveKit key file instead
 uses LiveKit's `key: secret` format described above.
 
-The setup service applies the collaboration schema. The local cloud applies
-its embedded migrations before it starts its HTTP listener.
+The local cloud applies all migrations in this project before it starts its
+HTTP listener. Systemd starts the collaboration server after the local cloud
+is ready. The `zed.target` target contains the credentials service, the local
+cloud service, and the collaboration service. It does not contain PostgreSQL
+or LiveKit.
 
 ## Authelia example
 
@@ -274,13 +282,13 @@ For secret generation details, see the official
 
 ## Standalone installation
 
-Use a fresh database for the first installation. Apply the Zed collaboration
-schema from the compatible Zed source tree:
+Use a fresh database for the first installation. Apply the fixed collaboration
+schema from this project:
 
 ```sh
 createdb -U postgres zed
 psql -U postgres -d zed \
-  -f /path/to/zed/crates/collab/migrations/20251208000000_test_schema.sql
+  -f /path/to/zed-local-cloud/migrations/20251208000000_test_schema.sql
 ```
 
 Do not apply the schema file a second time. The schema file is not idempotent.
@@ -434,10 +442,18 @@ SQLx uses one migration ledger for the collaboration server and the local
 cloud. Each migrator ignores migration versions that belong to the other
 component.
 
-The upstream collaboration migration is a schema snapshot. Its version can
-stay the same when upstream changes its contents. SQLx rejects an old database
-if the recorded checksum is different. Add a local incremental migration
-before you update to a Zed release with a new schema.
+The project keeps a fixed copy of the initial collaboration schema. Its SQLx
+version is `20251208000000`. Its SQLx SHA-384 checksum is
+`9c7061b50bfb256cba83454be75fbed99be601e9214e80ba0bf461d90c346bb2ae26ab0d7219aab086b3f9d51d18433d`.
+This checksum is the checksum in databases that this project created before
+the Zed 1.16.1 update.
+
+The collab package does not install the schema snapshot from the Zed source
+tree. The upstream file can change without a new migration version. Do not
+replace the fixed schema file when you update Zed. Compare the new upstream
+snapshot with the fixed schema. If the schema changed, add a new incremental
+migration to `migrations`. The migration must change an existing database to
+the new schema.
 
 ## Security limits
 
@@ -466,13 +482,9 @@ PostgreSQL to `127.0.0.1:5432`, OIDC to `http://localhost:9091`, and the
 unified Zed endpoint to `http://localhost:8787`. The tracked `.env` points
 SQLx at this database.
 
-The VM applies the collaboration migrations. Apply local migrations manually
-with `--ignore-missing` because both components share the SQLx migration
-ledger:
-
-```sh
-nix develop -c cargo sqlx migrate run --ignore-missing
-```
+The VM collaboration service applies all migrations in this project before it
+starts. The host-side local cloud finds the same migration ledger and does not
+apply the migrations a second time.
 
 The Nix development shell includes the version-matched Topcoat CLI and the
 Tailwind CSS CLI. In a second terminal, start the local cloud and UI:
