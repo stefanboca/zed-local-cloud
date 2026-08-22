@@ -1,5 +1,5 @@
 {
-  module,
+  self,
   pkgs,
 }: {
   nixos-basic = pkgs.testers.runNixOSTest {
@@ -7,7 +7,7 @@
 
     nodes.machine = {
       imports = [
-        module
+        self.nixosModules.default
         (import ../../dev/oidc-provider-mock.nix {port = 18080;})
       ];
 
