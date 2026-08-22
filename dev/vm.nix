@@ -1,7 +1,4 @@
-{
-  module,
-  overlay,
-}: {
+self: {
   config,
   lib,
   pkgs,
@@ -13,11 +10,14 @@
   cloudOrigin = "http://localhost:${toString cloudPort}";
 in {
   imports = [
-    module
-    (import ./oidc-provider-mock.nix {port = oidcPort;})
+    self.nixosModules.default
+    (import ./oidc-provider-mock.nix {
+      inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) oidc-provider-mock;
+      port = oidcPort;
+    })
   ];
 
-  nixpkgs.overlays = [overlay];
+  nixpkgs.overlays = [self.overlays.default];
 
   services.zed-local-cloud = {
     enable = true;

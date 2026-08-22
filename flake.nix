@@ -18,22 +18,8 @@
 
     systems = ["x86_64-linux" "aarch64-linux"];
     forAllSystems = genAttrs systems;
-    nixpkgsFor = forAllSystems (system:
-      import nixpkgs {
-        inherit system;
-        overlays = [self.overlays.default];
-      });
+    nixpkgsFor = forAllSystems (system: nixpkgs.legacyPackages.${system});
     treefmtFor = forAllSystems (system: treefmt-nix.lib.evalModule nixpkgsFor.${system} ./treefmt.nix);
-    devBackendFor = forAllSystems (system:
-      lib.nixosSystem {
-        inherit system;
-        modules = [
-          (import ./dev/vm.nix {
-            module = self.nixosModules.default;
-            overlay = self.overlays.default;
-          })
-        ];
-      });
   in {
     packages = forAllSystems (system: import ./pkgs nixpkgsFor.${system});
     overlays.default = _: import ./pkgs;
@@ -42,10 +28,15 @@
       default = import ./modules/nixos.nix;
     };
 
-    apps = forAllSystems (system: {
+    apps = forAllSystems (system: let
+      vm = lib.nixosSystem {
+        inherit system;
+        modules = [(import ./dev/vm.nix self)];
+      };
+    in {
       default = {
         type = "app";
-        program = "${devBackendFor.${system}.config.system.build.vm}/bin/run-nixos-vm";
+        program = getExe vm.config.system.build.vm;
         meta.description = "Run Zed collaboration, PostgreSQL, and a mock OIDC provider in a development VM";
       };
     });

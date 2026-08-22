@@ -1,4 +1,7 @@
-{port}: {
+{
+  oidc-provider-mock,
+  port,
+}: {
   lib,
   pkgs,
   ...
@@ -25,7 +28,7 @@ in {
     after = ["network.target"];
     serviceConfig = {
       DynamicUser = true;
-      ExecStart = "${getExe pkgs.oidc-provider-mock} --host 0.0.0.0 --port ${toString port} --require-nonce true --user-claims-file ${users}";
+      ExecStart = "${getExe oidc-provider-mock} --host 0.0.0.0 --port ${toString port} --require-nonce true --user-claims-file ${users}";
       Restart = "on-failure";
       RestartSec = 1;
     };

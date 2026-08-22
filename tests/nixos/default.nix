@@ -1,18 +1,32 @@
 {
   self,
   pkgs,
-}: {
+}: let
+  inherit
+    (self.packages.${pkgs.stdenv.hostPlatform.system})
+    oidc-provider-mock
+    zed-collab
+    zed-local-cloud
+    zed-migrations
+    ;
+in {
   nixos-basic = pkgs.testers.runNixOSTest {
     name = "zed-local-cloud-basic";
 
     nodes.machine = {
       imports = [
         self.nixosModules.default
-        (import ../../dev/oidc-provider-mock.nix {port = 18080;})
+        (import ../../dev/oidc-provider-mock.nix {
+          inherit oidc-provider-mock;
+          port = 18080;
+        })
       ];
 
       services.zed-local-cloud = {
         enable = true;
+        package = zed-local-cloud;
+        migrations.package = zed-migrations;
+        collab.package = zed-collab;
         virtualHost = "localhost";
         upstreamApiUrl = "http://127.0.0.1:18081";
         upstreamCloudUrl = "http://127.0.0.1:18081";

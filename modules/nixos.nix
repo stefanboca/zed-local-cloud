@@ -73,7 +73,7 @@ in {
   options.services.zed-local-cloud = {
     enable = mkEnableOption "the local Zed authentication and collaboration stack";
     package = mkPackageOption pkgs "zed-local-cloud" {};
-    migrationsPackage = mkPackageOption pkgs "zed-migrations" {};
+    migrations.package = mkPackageOption pkgs "zed-migrations" {};
 
     user = mkOption {
       type = str;
@@ -370,7 +370,7 @@ in {
           ${optionalString (!cfg.localCloud.enable) ''
             ${getExe pkgs.sqlx-cli} migrate run \
               --ignore-missing \
-              --source ${cfg.migrationsPackage}/share/zed/migrations \
+              --source ${cfg.migrations.package}/share/zed/migrations \
               --database-url ${escapeShellArg cfg.database.url}
           ''}
 
