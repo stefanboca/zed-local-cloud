@@ -113,6 +113,7 @@ The flake exports these items:
 
 - The `zed-local-cloud` package for the local cloud
 - The `zed-collab` package for the collaboration server
+- The `zed-migrations` package for the database migrations
 - The default NixOS module
 - A package overlay
 
@@ -448,8 +449,11 @@ version is `20251208000000`. Its SQLx SHA-384 checksum is
 This checksum is the checksum in databases that this project created before
 the Zed 1.16.1 update.
 
-The collab package does not install the schema snapshot from the Zed source
-tree. The upstream file can change without a new migration version. Do not
+The `zed-migrations` package contains the fixed schema and all incremental
+migrations. The collab package does not refer to these files. A migration
+change does not rebuild the collab package.
+
+The upstream schema file can change without a new migration version. Do not
 replace the fixed schema file when you update Zed. Compare the new upstream
 snapshot with the fixed schema. If the schema changed, add a new incremental
 migration to `migrations`. The migration must change an existing database to

@@ -38,8 +38,6 @@ rustPlatform.buildRustPackage {
     install -Dm755 \
       target/${stdenv.hostPlatform.rust.cargoShortTarget}/release/collab \
       $out/bin/collab
-    mkdir -p $out/share/zed-collab
-    cp -r ${../../migrations} $out/share/zed-collab/migrations
 
     runHook postInstall
   '';
