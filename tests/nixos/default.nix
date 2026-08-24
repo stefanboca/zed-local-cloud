@@ -225,6 +225,7 @@ in {
           "20251208000000",
           "20260724000000",
           "20260806000000",
+          "20260823000000",
       ], migrations
       collab_schema_checksum = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
@@ -454,22 +455,31 @@ in {
           "--tuples-only --no-align "
           "--command='SELECT count(*) FROM local_oidc_identities'"
       ).strip() == "1"
+      assert machine.succeed(
+          "runuser -u postgres -- psql --dbname=zed "
+          "--tuples-only --no-align "
+          "--command='SELECT count(*) FROM local_user_tokens WHERE user_id = 1'"
+      ).strip() == "2"
 
       known_token = "zed-1.16.1-contract-token"
       known_token_hash = hashlib.sha256(known_token.encode()).hexdigest()
-      update_token = (
-          "UPDATE local_user_tokens "
-          f"SET access_token_hash = '{known_token_hash}' WHERE user_id = 1"
+      insert_token = (
+          "INSERT INTO local_user_tokens (user_id, access_token_hash) "
+          f"VALUES (1, '{known_token_hash}')"
       )
       machine.succeed(
           "runuser -u postgres -- psql --dbname=zed --set=ON_ERROR_STOP=1 "
-          f"--command={shlex.quote(update_token)}"
+          f"--command={shlex.quote(insert_token)}"
       )
-      authenticated_user = json.loads(machine.succeed(
-          "curl --insecure --silent --show-error "
-          f"--header={shlex.quote(f'Authorization: 1 {known_token}')} "
-          "https://localhost/client/users/me"
-      ))
+
+      def authenticate(token):
+          return json.loads(machine.succeed(
+              "curl --insecure --silent --show-error "
+              f"--header={shlex.quote(f'Authorization: 1 {token}')} "
+              "https://localhost/client/users/me"
+          ))
+
+      authenticated_user = authenticate(known_token)
       assert authenticated_user["user"] == {
           "id_v2": "local-1",
           "legacy_user_id": 1,
@@ -487,6 +497,19 @@ in {
       assert authenticated_user["configuration_by_organization"]["local"][
           "is_collaboration_enabled"
       ] is True
+
+      machine.succeed(
+          "systemctl restart zed-local-cloud.service zed-collab.service"
+      )
+      machine.wait_for_unit("zed-local-cloud.service")
+      machine.wait_for_unit("zed-collab.service")
+      assert authenticate(known_token) == authenticated_user
+      rpc_status = machine.succeed(
+          "curl --insecure --silent --show-error --output /dev/null "
+          f"--header={shlex.quote(f'Authorization: 1 {known_token}')} "
+          "--write-out='%{http_code}' https://localhost/actual_rpc"
+      ).strip()
+      assert rpc_status != "401", rpc_status
 
       internal_authorization = f"Authorization: Bearer {key}"
 

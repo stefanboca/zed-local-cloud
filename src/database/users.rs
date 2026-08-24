@@ -205,9 +205,6 @@ pub async fn sync_oidc_user(
         r#"
         INSERT INTO local_user_tokens (user_id, access_token_hash)
         VALUES ($1, $2)
-        ON CONFLICT (user_id) DO UPDATE
-        SET access_token_hash = EXCLUDED.access_token_hash,
-            last_validated_at = now()
         "#,
         user_id,
         hash_access_token(access_token),
