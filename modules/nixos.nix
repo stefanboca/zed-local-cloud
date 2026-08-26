@@ -357,8 +357,9 @@ in {
         description = "Zed collaboration server";
         requires =
           ["zed-credentials.service"]
-          ++ optionals (!cfg.localCloud.enable) postgresqlDependencies
-          ++ optional cfg.localCloud.enable "zed-local-cloud.service"
+          ++ optionals (!cfg.localCloud.enable) postgresqlDependencies;
+        wants =
+          optional cfg.localCloud.enable "zed-local-cloud.service"
           ++ optional cfg.livekit.enable "livekit.service";
         after =
           ["zed-credentials.service"]

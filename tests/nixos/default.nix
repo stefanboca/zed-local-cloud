@@ -116,6 +116,16 @@ in {
           "systemctl show zed-collab.service --property=After --value"
       ).split())
       assert "zed-local-cloud.service" in collab_after, collab_after
+      collab_requires = set(machine.succeed(
+          "systemctl show zed-collab.service --property=Requires --value"
+      ).split())
+      assert "zed-local-cloud.service" not in collab_requires, collab_requires
+      assert "livekit.service" not in collab_requires, collab_requires
+      collab_wants = set(machine.succeed(
+          "systemctl show zed-collab.service --property=Wants --value"
+      ).split())
+      assert "zed-local-cloud.service" in collab_wants, collab_wants
+      assert "livekit.service" in collab_wants, collab_wants
 
       assert machine.succeed(
           "stat --format='%U:%G %a' /var/lib/zed"
