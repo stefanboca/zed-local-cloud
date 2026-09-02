@@ -18,10 +18,8 @@ enum Command {
     Provision {
         #[arg(long, value_name = "PATH")]
         collab_secret_file: PathBuf,
-        #[arg(long, value_name = "PATH", requires = "livekit_secret_file")]
-        livekit_key_file: Option<PathBuf>,
-        #[arg(long, value_name = "PATH", requires = "livekit_key_file")]
-        livekit_secret_file: Option<PathBuf>,
+        #[arg(long, value_name = "KEY")]
+        livekit_api_key: Option<String>,
     },
     Serve,
 }
@@ -33,14 +31,12 @@ async fn main() -> anyhow::Result<()> {
     match command {
         Command::Provision {
             collab_secret_file,
-            livekit_key_file,
-            livekit_secret_file,
+            livekit_api_key,
         } => {
             provision(
                 Config::new(arguments.config.as_deref())?,
                 &collab_secret_file,
-                livekit_key_file.as_deref(),
-                livekit_secret_file.as_deref(),
+                livekit_api_key.as_deref(),
             )
             .await?;
             return Ok(());

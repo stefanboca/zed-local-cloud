@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs::{self, OpenOptions},
     io::Write as _,
     os::unix::fs::OpenOptionsExt as _,
@@ -25,8 +26,7 @@ struct CollabSecrets<'a> {
 pub async fn provision(
     config: Config,
     collab_secret_file: &Path,
-    livekit_key_file: Option<&Path>,
-    livekit_secret_file: Option<&Path>,
+    livekit_api_key: Option<&str>,
 ) -> anyhow::Result<()> {
     let mut secrets = secretspec::Secrets::load()?.with_reason("provision Zed service secrets");
     secrets.set_profile("production");
@@ -38,24 +38,34 @@ pub async fn provision(
     // migrate the db and update pg_trgm
     Database::new(secrets.database_url.trim()).await?;
 
-    let livekit = match (livekit_key_file, livekit_secret_file) {
-        (Some(key), Some(secret)) => Some((
-            fs::read_to_string(key).with_context(|| format!("reading {}", key.display()))?,
-            fs::read_to_string(secret).with_context(|| format!("reading {}", secret.display()))?,
-        )),
+    let livekit = match (secrets.livekit_keys.as_deref(), livekit_api_key) {
+        (Some(keys), Some(api_key)) => Some((api_key, find_livekit_secret(keys, api_key)?)),
         (None, None) => None,
-        _ => bail!("the LiveKit key and secret files must be provided together"),
+        (None, Some(_)) => bail!("LIVEKIT_KEYS is required when a LiveKit API key is configured"),
+        (Some(_), None) => bail!("a LiveKit API key is required when LIVEKIT_KEYS is provided"),
     };
     let collab_secrets = CollabSecrets {
         database_url: secrets.database_url.trim(),
         internal_api_key: secrets.internal_api_key.trim(),
-        livekit_key: livekit.as_ref().map(|(key, _)| key.trim()),
-        livekit_secret: livekit.as_ref().map(|(_, secret)| secret.trim()),
+        livekit_key: livekit.as_ref().map(|(key, _)| *key),
+        livekit_secret: livekit.as_ref().map(|(_, secret)| secret.as_str()),
     };
     write_atomic(
         collab_secret_file,
         toml::to_string(&collab_secrets).context("encoding collab secrets")?,
     )
+}
+
+fn find_livekit_secret(keys: &str, api_key: &str) -> anyhow::Result<String> {
+    let keys: HashMap<String, String> =
+        serde_yaml_ng::from_str(keys).context("decoding the LiveKit key file")?;
+    let secret = keys
+        .get(api_key)
+        .with_context(|| format!("LiveKit API key {api_key:?} was not found"))?;
+    if secret.is_empty() {
+        bail!("LiveKit API key {api_key:?} has an empty secret");
+    }
+    Ok(secret.clone())
 }
 
 fn write_atomic(path: &Path, contents: String) -> anyhow::Result<()> {
@@ -77,4 +87,20 @@ fn write_atomic(path: &Path, contents: String) -> anyhow::Result<()> {
         .with_context(|| format!("syncing {}", temporary.display()))?;
     fs::rename(&temporary, path).with_context(|| format!("replacing {}", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_livekit_secret;
+
+    #[test]
+    fn selects_a_livekit_application_from_a_shared_key_file() {
+        let keys = "# shared LiveKit applications\nother: other-secret\n\"zed\": zed-secret:part\n";
+        assert_eq!(find_livekit_secret(keys, "zed").unwrap(), "zed-secret:part");
+    }
+
+    #[test]
+    fn rejects_missing_livekit_keys() {
+        assert!(find_livekit_secret("other: secret\n", "zed").is_err());
+    }
 }

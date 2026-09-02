@@ -8,6 +8,10 @@ self: {
   databasePort = 5432;
   oidcPort = 9091;
   cloudOrigin = "http://localhost:${toString cloudPort}";
+  livekitApiKey = "development";
+  livekitKeys = pkgs.writeText "zed-development-livekit-keys" ''
+    ${livekitApiKey}: development-development-development
+  '';
 in {
   imports = [
     self.nixosModules.default
@@ -23,13 +27,15 @@ in {
     enable = true;
     localCloud.enable = false;
     virtualHost = cloudOrigin;
-    collab.cloudUrl = "http://10.0.2.2:3000";
-    oidc = {
-      issuerUrl = "http://localhost:${toString oidcPort}";
-      clientId = "zed-local";
-      clientSecretFile = toString (pkgs.writeText "zed-development-oidc-secret" "development");
+    collab.environment.ZED_CLOUD_URL = "http://10.0.2.2:3000";
+    livekit.apiKey = livekitApiKey;
+    localCloud.settings.oidc = {
+      issuer_url = "http://localhost:${toString oidcPort}";
+      client_id = "zed-local";
     };
+    oidc.clientSecretFile = toString (pkgs.writeText "zed-development-oidc-secret" "development");
   };
+  services.livekit.keyFile = livekitKeys;
 
   services.caddy.virtualHosts.${cloudOrigin}.extraConfig = lib.mkAfter ''
     reverse_proxy 10.0.2.2:3000

@@ -4,53 +4,38 @@
   pkgs,
   ...
 }: let
-  inherit (lib.attrsets) optionalAttrs;
-  inherit (lib.lists) optional;
+  inherit (lib.lists) optional optionals;
   inherit (lib.meta) getExe;
   inherit (lib.modules) mkDefault mkIf;
   inherit (lib.options) mkEnableOption mkOption mkPackageOption;
-  inherit (lib.strings) optionalString;
-  inherit (lib.types) bool int listOf nullOr port str;
+  inherit (lib.strings) escapeShellArgs optionalString;
+  inherit (lib.types) attrsOf bool float int listOf nullOr oneOf port str submodule;
 
-  cfg = config.services.zed-local-cloud;
+  toml = pkgs.formats.toml {};
 
-  generatedLivekitKeyFile = "/var/lib/zed/livekit-keys";
-  livekitKeyFile = toString config.services.livekit.keyFile;
   databaseUrl = "postgres://${cfg.user}@%2Frun%2Fpostgresql/${cfg.database.name}";
   databaseUrlFile =
     if cfg.database.urlFile != null
     then toString cfg.database.urlFile
     else pkgs.writeText "zed-database-url" databaseUrl;
 
-  localCloudConfig = (pkgs.formats.toml {}).generate "zed-local-cloud.toml" {
-    base_url = "https://${cfg.virtualHost}";
-    bind_address = "127.0.0.1:${toString cfg.port}";
-    log_level = cfg.logLevel;
-    oidc = {
-      admin_claim = cfg.oidc.adminClaim;
-      admin_value = cfg.oidc.adminValue;
-      client_id = cfg.oidc.clientId;
-      issuer_url = cfg.oidc.issuerUrl;
-      scopes = cfg.oidc.scopes;
-    };
-  };
-
-  collabEnvironment = (pkgs.formats.toml {}).generate "zed-collab.toml" ({
-      DATABASE_MAX_CONNECTIONS = cfg.collab.databaseMaxConnections;
-      HTTP_PORT = cfg.collab.port;
-      LOG_JSON = cfg.collab.logJson;
-      RUST_LOG = cfg.collab.logLevel;
-      ZED_CLOUD_URL = cfg.collab.cloudUrl;
-      ZED_ENVIRONMENT = "production";
-    }
-    // optionalAttrs (cfg.collab.clientChecksumSeed != null) {
-      ZED_CLIENT_CHECKSUM_SEED = cfg.collab.clientChecksumSeed;
-    }
-    // optionalAttrs cfg.livekit.enable {
-      LIVEKIT_SERVER = "https://${cfg.virtualHost}/livekit";
-    });
+  localCloudConfig = toml.generate "zed-local-cloud.toml" cfg.localCloud.settings;
+  collabEnvironment = toml.generate "zed-collab.toml" cfg.collab.environment;
 
   postgresqlDependencies = optional cfg.database.createLocally "postgresql.target";
+
+  provisionArguments =
+    [
+      "provision"
+      "--config"
+      (toString localCloudConfig)
+      "--collab-secret-file"
+      "%S/zed/collab/.env.secret.toml"
+    ]
+    ++ optionals cfg.livekit.enable [
+      "--livekit-api-key"
+      cfg.livekit.apiKey
+    ];
 
   hardening = {
     LockPersonality = true;
@@ -72,6 +57,8 @@
     SystemCallArchitectures = "native";
     UMask = "0077";
   };
+
+  cfg = config.services.zed-local-cloud;
 in {
   options.services.zed-local-cloud = {
     enable = mkEnableOption "the local Zed authentication and collaboration stack";
@@ -89,22 +76,83 @@ in {
       description = "Group under which the local cloud and collab server run.";
     };
 
-    port = mkOption {
-      type = port;
-      default = 8787;
-      description = "Localhost port on which the local cloud listens.";
-    };
-
     virtualHost = mkOption {
       type = str;
       example = "zed.example.com";
       description = "Public host used as the Caddy virtual host and OIDC callback authority.";
     };
 
-    localCloud.enable = mkOption {
-      type = bool;
-      default = true;
-      description = "Whether to run the packaged local cloud service. Disable this for host-side development.";
+    localCloud = {
+      enable = mkOption {
+        type = bool;
+        default = true;
+        description = "Whether to run the packaged local cloud service. Disable this for host-side development.";
+      };
+
+      settings = mkOption {
+        description = "Configuration written directly to the local-cloud TOML file.";
+        default = {};
+        type = submodule {
+          freeformType = toml.type;
+          options = {
+            base_url = mkOption {
+              type = str;
+              default = "https://${cfg.virtualHost}";
+              description = "Public local-cloud URL used for OIDC callbacks.";
+            };
+
+            bind_address = mkOption {
+              type = str;
+              default = "127.0.0.1:8787";
+              description = "Address on which local-cloud listens.";
+            };
+
+            log_level = mkOption {
+              type = str;
+              default = "zed_local_cloud=info,sqlx=warn";
+              description = "Tracing filter used by local-cloud.";
+            };
+
+            oidc = mkOption {
+              default = {};
+              type = submodule {
+                freeformType = toml.type;
+                options = {
+                  issuer_url = mkOption {
+                    type = str;
+                    example = "https://auth.example.com";
+                    description = "OIDC issuer URL.";
+                  };
+
+                  client_id = mkOption {
+                    type = str;
+                    example = "zed-local";
+                    description = "OIDC client identifier.";
+                  };
+
+                  scopes = mkOption {
+                    type = listOf str;
+                    default = ["profile" "email" "groups"];
+                    description = "OIDC scopes in addition to the required openid scope.";
+                  };
+
+                  admin_claim = mkOption {
+                    type = str;
+                    default = "groups";
+                    description = "OIDC claim containing the administrator value.";
+                  };
+
+                  admin_value = mkOption {
+                    type = str;
+                    default = "admin";
+                    description = "OIDC claim value granting administrator privileges.";
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
     };
 
     upstreamApiUrl = mkOption {
@@ -120,96 +168,78 @@ in {
     };
 
     oidc = {
-      issuerUrl = mkOption {
-        type = str;
-        example = "https://auth.example.com";
-        description = "OIDC issuer URL.";
-      };
-
-      clientId = mkOption {
-        type = str;
-        example = "zed-local";
-        description = "OIDC client identifier.";
-      };
-
       clientSecretFile = mkOption {
         type = str;
         example = "/run/secrets/zed-oidc-client-secret";
         description = "File that contains the OIDC client secret.";
       };
-
-      scopes = mkOption {
-        type = listOf str;
-        default = ["profile" "email" "groups"];
-        description = "OIDC scopes in addition to the required openid scope.";
-      };
-
-      adminClaim = mkOption {
-        type = str;
-        default = "groups";
-        description = "OIDC claim that contains the administrator value. Dot notation selects nested claims.";
-      };
-
-      adminValue = mkOption {
-        type = str;
-        default = "admin";
-        description = "OIDC claim value that grants local administrator privileges.";
-      };
-    };
-
-    logLevel = mkOption {
-      type = str;
-      default = "zed_local_cloud=info,sqlx=warn";
-      description = "Tracing filter used by the local cloud.";
     };
 
     collab = {
       package = mkPackageOption pkgs "zed-collab" {};
 
-      port = mkOption {
-        type = port;
-        default = 8080;
-        description = "Port on which the local collab server listens.";
-      };
+      environment = mkOption {
+        default = {};
+        type = submodule {
+          freeformType = attrsOf (oneOf [bool float int str]);
+          options = {
+            DATABASE_MAX_CONNECTIONS = mkOption {
+              type = int;
+              default = 5;
+              description = "Maximum number of collab database connections.";
+            };
 
-      cloudUrl = mkOption {
-        type = str;
-        default = "http://127.0.0.1:${toString cfg.port}";
-        description = "Local cloud URL used by the collaboration server.";
-      };
+            HTTP_PORT = mkOption {
+              type = port;
+              default = 8080;
+              description = "Port on which collab listens.";
+            };
 
-      databaseMaxConnections = mkOption {
-        type = int;
-        default = 5;
-        description = "Maximum number of collab database connections.";
-      };
+            LIVEKIT_SERVER = mkOption {
+              type = str;
+              description = "Public LiveKit server URL.";
+            };
 
-      clientChecksumSeed = mkOption {
-        type = nullOr str;
-        default = null;
-        description = ''
-          Seed used for Zed telemetry checksum validation. Leave null when
-          telemetry is not collected.
-        '';
-      };
+            LOG_JSON = mkOption {
+              type = bool;
+              default = false;
+              description = "Whether collab emits JSON logs.";
+            };
 
-      logLevel = mkOption {
-        type = str;
-        default = "info";
-        description = "Tracing filter used by collab.";
-      };
+            RUST_LOG = mkOption {
+              type = str;
+              default = "info";
+              description = "Tracing filter used by collab.";
+            };
 
-      logJson = mkOption {
-        type = bool;
-        default = false;
-        description = "Whether collab emits JSON logs.";
+            ZED_CLOUD_URL = mkOption {
+              type = str;
+              default = "http://127.0.0.1:8787";
+              description = "Local cloud URL used by collab.";
+            };
+
+            ZED_ENVIRONMENT = mkOption {
+              type = str;
+              default = "production";
+              description = "Zed deployment environment name.";
+            };
+          };
+        };
+        description = "Values written directly to collab's environment TOML file.";
       };
     };
 
-    livekit.enable = mkOption {
-      type = bool;
-      default = true;
-      description = "Whether to enable the NixOS LiveKit service and connect collab to it.";
+    livekit = {
+      enable = mkOption {
+        type = bool;
+        default = true;
+        description = "Whether to enable the NixOS LiveKit service and connect collab to it.";
+      };
+
+      apiKey = mkOption {
+        type = str;
+        description = "API key name in services.livekit.keyFile to use for Zed.";
+      };
     };
 
     database = {
@@ -237,10 +267,12 @@ in {
   };
 
   config = mkIf cfg.enable {
+    services.zed-local-cloud.collab.environment.LIVEKIT_SERVER = mkIf cfg.livekit.enable (mkDefault "https://${cfg.virtualHost}/livekit");
+
     assertions = [
       {
-        assertion = cfg.collab.databaseMaxConnections > 0;
-        message = "services.zed-local-cloud.collab.databaseMaxConnections must be positive.";
+        assertion = cfg.collab.environment.DATABASE_MAX_CONNECTIONS > 0;
+        message = "services.zed-local-cloud.collab.environment.DATABASE_MAX_CONNECTIONS must be positive.";
       }
       {
         assertion = !cfg.database.createLocally || cfg.database.name == cfg.user;
@@ -272,11 +304,7 @@ in {
       ];
     };
 
-    services.livekit = mkIf cfg.livekit.enable {
-      enable = true;
-      keyFile = mkDefault generatedLivekitKeyFile;
-    };
-
+    services.livekit.enable = mkIf cfg.livekit.enable true;
     networking.firewall.allowedUDPPortRanges = mkIf cfg.livekit.enable [
       {
         from = config.services.livekit.settings.rtc.port_range_start;
@@ -296,7 +324,7 @@ in {
           redir /rpc {http.request.scheme}://{http.request.hostport}/actual_rpc 307
           handle /actual_rpc {
             rewrite * /rpc
-            reverse_proxy 127.0.0.1:${toString cfg.collab.port}
+            reverse_proxy 127.0.0.1:${toString cfg.collab.environment.HTTP_PORT}
           }
           @upstreamApi path /extensions /extensions/*
           handle @upstreamApi {
@@ -312,7 +340,7 @@ in {
           }
           ${optionalString cfg.localCloud.enable ''
           handle {
-            reverse_proxy 127.0.0.1:${toString cfg.port}
+            reverse_proxy ${cfg.localCloud.settings.bind_address}
           }
         ''}
         }
@@ -414,65 +442,11 @@ in {
         description = "Provision the local Zed services";
         requires = postgresqlDependencies;
         after = postgresqlDependencies;
-        script = ''
-          ${optionalString cfg.livekit.enable ''
-            (
-              set -euo pipefail
-              umask 0077
-
-              split_livekit_pair() {
-                livekit_key="$(printf '%s' "''${livekit_pair%%:*}" | tr -d '[:space:]')"
-                livekit_secret="$(printf '%s' "''${livekit_pair#*:}" | tr -d '[:space:]')"
-                if [ "$livekit_pair" = "$livekit_secret" ]; then
-                  livekit_key=""
-                fi
-              }
-
-              ${optionalString (livekitKeyFile == generatedLivekitKeyFile) ''
-              if [ ! -s "$STATE_DIRECTORY/livekit-api-key" ] || [ ! -s "$STATE_DIRECTORY/livekit-api-secret" ]; then
-                generated="$(${getExe config.services.livekit.package} generate-keys)"
-                livekit_key="$(printf '%s\n' "$generated" | sed -n 's/^API Key:[[:space:]]*//p')"
-                livekit_secret="$(printf '%s\n' "$generated" | sed -n 's/^API Secret:[[:space:]]*//p')"
-              else
-                livekit_key="$(< "$STATE_DIRECTORY/livekit-api-key")"
-                livekit_secret="$(< "$STATE_DIRECTORY/livekit-api-secret")"
-              fi
-            ''}
-              ${optionalString (livekitKeyFile != generatedLivekitKeyFile) ''
-              livekit_pair="$(sed -n '/^[[:space:]]*\(#\|$\)/!{p;q}' "$CREDENTIALS_DIRECTORY/livekit-keys")"
-              split_livekit_pair
-            ''}
-
-              if [ -z "$livekit_key" ] || [ -z "$livekit_secret" ]; then
-                echo "could not obtain a LiveKit API key and secret" >&2
-                exit 1
-              fi
-
-              printf '%s' "$livekit_key" >"$STATE_DIRECTORY/livekit-api-key"
-              printf '%s' "$livekit_secret" >"$STATE_DIRECTORY/livekit-api-secret"
-              ${optionalString (livekitKeyFile == generatedLivekitKeyFile) ''
-              printf '%s: %s\n' "$livekit_key" "$livekit_secret" >"$STATE_DIRECTORY/livekit-keys"
-            ''}
-            )
-          ''}
-
-          provision_args=(
-            --config ${localCloudConfig}
-            --collab-secret-file "$STATE_DIRECTORY/collab/.env.secret.toml"
-          )
-          ${optionalString cfg.livekit.enable ''
-            provision_args+=(
-              --livekit-key-file "$STATE_DIRECTORY/livekit-api-key"
-              --livekit-secret-file "$STATE_DIRECTORY/livekit-api-secret"
-            )
-          ''}
-          ${getExe cfg.package} provision "''${provision_args[@]}"
-
-        '';
 
         serviceConfig =
           hardening
           // {
+            ExecStart = "${getExe cfg.package} ${escapeShellArgs provisionArguments}";
             Group = cfg.group;
             Environment = ["XDG_STATE_HOME=%S/zed"];
             LoadCredential =
@@ -480,7 +454,7 @@ in {
                 "DATABASE_URL:${databaseUrlFile}"
                 "OIDC_CLIENT_SECRET:${toString cfg.oidc.clientSecretFile}"
               ]
-              ++ optional (cfg.livekit.enable && livekitKeyFile != generatedLivekitKeyFile) "livekit-keys:${livekitKeyFile}";
+              ++ optional cfg.livekit.enable "LIVEKIT_KEYS:${toString config.services.livekit.keyFile}";
             RemainAfterExit = true;
             RuntimeDirectory = "zed-provision";
             RuntimeDirectoryMode = "0700";

@@ -9,6 +9,14 @@
     zed-local-cloud
     ;
 
+  livekitApiKey = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  livekitApiSecret = "zed-livekit-secret-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij";
+  livekitKeysText = ''
+    unrelated-application: unrelated-secret-0123456789abcdef
+    ${livekitApiKey}: ${livekitApiSecret}
+  '';
+  livekitKeys = pkgs.writeText "test-livekit-keys" livekitKeysText;
+
   websocketNotificationClient =
     pkgs.writers.writePython3 "websocket-notification-client" {
       libraries = [pkgs.python3Packages.websocket-client];
@@ -55,14 +63,17 @@ in {
         virtualHost = "localhost";
         upstreamApiUrl = "http://127.0.0.1:18081";
         upstreamCloudUrl = "http://127.0.0.1:18081";
-        oidc = {
-          adminClaim = "groups";
-          adminValue = "zed-admin";
-          issuerUrl = "http://127.0.0.1:18080";
-          clientId = "zed-local";
-          clientSecretFile = toString (pkgs.writeText "test-oidc-client-secret" "test-client-secret");
+        livekit.apiKey = livekitApiKey;
+        collab.environment.BLOB_STORE_REGION = "test-region";
+        localCloud.settings.oidc = {
+          admin_claim = "groups";
+          admin_value = "zed-admin";
+          issuer_url = "http://127.0.0.1:18080";
+          client_id = "zed-local";
         };
+        oidc.clientSecretFile = toString (pkgs.writeText "test-oidc-client-secret" "test-client-secret");
       };
+      services.livekit.keyFile = livekitKeys;
 
       systemd.services.fake-extensions = {
         wantedBy = ["multi-user.target"];
@@ -170,14 +181,6 @@ in {
       assert machine.succeed(
           "stat --format='%U:%G %a %s' /var/lib/zed/cookie-key"
       ).strip() == "zed:zed 600 88"
-      assert machine.succeed(
-          "stat --format='%U:%G %a' /var/lib/zed/livekit-keys"
-      ).strip() == "zed:zed 600"
-      for livekit_credential in ["livekit-api-key", "livekit-api-secret"]:
-          assert machine.succeed(
-              "stat --format='%U:%G %a' "
-              f"/var/lib/zed/{livekit_credential}"
-          ).strip() == "zed:zed 600"
       key = machine.succeed("cat /var/lib/zed/internal-api-key")
       cookie_key = machine.succeed("cat /var/lib/zed/cookie-key")
       cookie_key_hash = machine.succeed(
@@ -185,13 +188,8 @@ in {
       ).split()[0]
       assert len(base64.b64decode(cookie_key, validate=True)) == 64
       assert len(base64.b64decode(key, validate=True)) == 128
-      livekit_key = machine.succeed("cat /var/lib/zed/livekit-api-key")
-      livekit_secret = machine.succeed("cat /var/lib/zed/livekit-api-secret")
-      assert len(livekit_key) >= 12
-      assert len(livekit_secret) >= 32
-      assert machine.succeed(
-          "cat /var/lib/zed/livekit-keys"
-      ) == f"{livekit_key}: {livekit_secret}\n"
+      livekit_key = ${builtins.toJSON livekitApiKey}
+      livekit_secret = ${builtins.toJSON livekitApiSecret}
 
       auth_environment = machine.succeed(
           "systemctl show zed-local-cloud.service --property=Environment --value"
@@ -231,6 +229,7 @@ in {
       )
       assert collab_environment["ZED_CLOUD_URL"] == "http://127.0.0.1:8787"
       assert collab_environment["ZED_ENVIRONMENT"] == "production"
+      assert collab_environment["BLOB_STORE_REGION"] == "test-region"
       assert collab_environment["LIVEKIT_SERVER"] == "https://localhost/livekit"
       assert "ZED_CLIENT_CHECKSUM_SEED" not in collab_environment
       collab_secret = tomllib.loads(
@@ -246,7 +245,7 @@ in {
       }
       assert machine.succeed(
           "cat /run/credentials/livekit.service/livekit-secrets"
-      ) == f"{livekit_key}: {livekit_secret}\n"
+      ) == ${builtins.toJSON livekitKeysText}
       assert "DATABASE_URL" not in collab_environment
 
       machine.succeed("systemctl restart zed-provision.service")
@@ -256,10 +255,9 @@ in {
       assert machine.succeed(
           "cat /var/lib/zed/internal-api-key"
       ) == key
-      assert machine.succeed("cat /var/lib/zed/livekit-api-key") == livekit_key
-      assert machine.succeed(
-          "cat /var/lib/zed/livekit-api-secret"
-      ) == livekit_secret
+      assert tomllib.loads(
+          machine.succeed("cat /var/lib/zed/collab/.env.secret.toml")
+      )["LIVEKIT_SECRET"] == livekit_secret
 
       migrations = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
