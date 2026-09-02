@@ -21,14 +21,9 @@ writing rules of ASD-STE100 Simplified Technical English.
 ## Compatibility baseline
 
 The project uses
-[Zed v1.16.1](https://github.com/zed-industries/zed/tree/v1.16.1) as its
+[Zed v1.17.2](https://github.com/zed-industries/zed/tree/v1.17.2) as its
 compatibility baseline. This is the Zed release packaged by the current
 nixpkgs input.
-
-Zed 1.16.1 uses the same required client API and internal collaboration API
-as Zed 1.15.0. It also uses the same collaboration schema. The compatibility
-test checks the authenticated user response and all four internal
-collaboration routes.
 
 The baseline defines these interfaces:
 
@@ -44,13 +39,13 @@ Check these interfaces before you update Zed.
 
 The default installation has these components:
 
-| Component | Default address | Function |
-| --- | --- | --- |
-| PostgreSQL | Local socket | Store collaboration and local cloud data |
-| Zed collaboration server | `127.0.0.1:8080` | Provide collaboration RPC |
-| Zed local cloud | `127.0.0.1:8787` | Provide login and cloud API routes |
-| Caddy | Public HTTPS address | Route public requests |
-| OIDC provider | External or local address | Authenticate users |
+| Component                | Default address           | Function                                 |
+| ------------------------ | ------------------------- | ---------------------------------------- |
+| PostgreSQL               | Local socket              | Store collaboration and local cloud data |
+| Zed collaboration server | `127.0.0.1:8080`          | Provide collaboration RPC                |
+| Zed local cloud          | `127.0.0.1:8787`          | Provide login and cloud API routes       |
+| Caddy                    | Public HTTPS address      | Route public requests                    |
+| OIDC provider            | External or local address | Authenticate users                       |
 
 The local cloud uses the [Topcoat](https://github.com/tokio-rs/topcoat) web
 framework and encrypted private cookies for the OIDC transaction. It uses the
@@ -83,12 +78,12 @@ not store the OIDC access token, OIDC client secret, or OIDC flow in PostgreSQL.
 The local cloud uses the OIDC issuer and subject as the permanent user
 identity. It reads these standard claims:
 
-| Claim | Use |
-| --- | --- |
-| `preferred_username` | Create the local username |
-| `email` | Supply an email address and a username fallback |
-| `name` | Supply the display name |
-| `picture` | Supply the Zed `avatar_url` |
+| Claim                | Use                                             |
+| -------------------- | ----------------------------------------------- |
+| `preferred_username` | Create the local username                       |
+| `email`              | Supply an email address and a username fallback |
+| `name`               | Supply the display name                         |
+| `picture`            | Supply the Zed `avatar_url`                     |
 
 The service reads claims from the verified ID token. If the provider has a
 UserInfo endpoint, the service also reads claims from that endpoint. A
@@ -235,7 +230,7 @@ identity_providers:
     clients:
       - client_id: zed-local
         client_name: Zed Local Cloud
-        client_secret: '<PBKDF2_HASH_FROM_THE_COMMAND>'
+        client_secret: "<PBKDF2_HASH_FROM_THE_COMMAND>"
         public: false
         authorization_policy: two_factor
         require_pkce: true
@@ -365,13 +360,13 @@ local profile and administrator status.
 
 The NixOS module uses a small Caddy route table:
 
-| Public path | Destination |
-| --- | --- |
-| `/rpc` | Redirect to `/actual_rpc` on the same authority |
-| `/actual_rpc` | Local collaboration server `/rpc` |
-| `/extensions` and `/extensions/*` | `https://api.zed.dev` |
-| `/releases` and `/releases/*` | `https://cloud.zed.dev` |
-| All other paths | Local cloud service |
+| Public path                       | Destination                                     |
+| --------------------------------- | ----------------------------------------------- |
+| `/rpc`                            | Redirect to `/actual_rpc` on the same authority |
+| `/actual_rpc`                     | Local collaboration server `/rpc`               |
+| `/extensions` and `/extensions/*` | `https://api.zed.dev`                           |
+| `/releases` and `/releases/*`     | `https://cloud.zed.dev`                         |
+| All other paths                   | Local cloud service                             |
 
 The Rust service supplies `/models`. It returns an empty hosted-model catalog.
 The service does not proxy Zed-hosted language models.
@@ -411,17 +406,17 @@ Start `zed-local-cloud` with `--config` and the path to one TOML file. In
 production, application settings come from this file and secrets come from
 systemd credentials. `RUST_LOG` can override the configured tracing filter.
 
-| TOML key | Default | Function |
-| --- | --- | --- |
-| `base_url` | Required | Set the public local cloud URL used for the OIDC callback |
-| `bind_address` | `127.0.0.1:8787` | Set the local cloud TCP listen address |
-| `database_url` | Local `zed` socket URL | Set the shared PostgreSQL URL |
-| `log_level` | `zed_local_cloud=info,sqlx=warn` | Set the tracing filter |
-| `oidc.issuer_url` | Required | Set the OIDC issuer URL |
-| `oidc.client_id` | Required | Set the OIDC client identifier |
-| `oidc.scopes` | `profile`, `email`, `groups` | Set the additional OIDC scopes |
-| `oidc.admin_claim` | `groups` | Set the administrator claim path |
-| `oidc.admin_value` | `admin` | Set the administrator claim value |
+| TOML key           | Default                          | Function                                                  |
+| ------------------ | -------------------------------- | --------------------------------------------------------- |
+| `base_url`         | Required                         | Set the public local cloud URL used for the OIDC callback |
+| `bind_address`     | `127.0.0.1:8787`                 | Set the local cloud TCP listen address                    |
+| `database_url`     | Local `zed` socket URL           | Set the shared PostgreSQL URL                             |
+| `log_level`        | `zed_local_cloud=info,sqlx=warn` | Set the tracing filter                                    |
+| `oidc.issuer_url`  | Required                         | Set the OIDC issuer URL                                   |
+| `oidc.client_id`   | Required                         | Set the OIDC client identifier                            |
+| `oidc.scopes`      | `profile`, `email`, `groups`     | Set the additional OIDC scopes                            |
+| `oidc.admin_claim` | `groups`                         | Set the administrator claim path                          |
+| `oidc.admin_value` | `admin`                          | Set the administrator claim value                         |
 
 Do not put secret values in the TOML file. The service requires the systemd
 credentials `internal-api-key` and `oidc-client-secret`. It removes leading
@@ -447,7 +442,7 @@ The project keeps a fixed copy of the initial collaboration schema. Its SQLx
 version is `20251208000000`. Its SQLx SHA-384 checksum is
 `9c7061b50bfb256cba83454be75fbed99be601e9214e80ba0bf461d90c346bb2ae26ab0d7219aab086b3f9d51d18433d`.
 This checksum is the checksum in databases that this project created before
-the Zed 1.16.1 update.
+the Zed 1.17.2 update.
 
 The `zed-migrations` package contains the fixed schema and all incremental
 migrations. The collab package does not refer to these files. A migration
@@ -548,4 +543,3 @@ that Caddy removes local authorization data and cookies.
 - Hosted Zed AI is disabled for the local organization.
 - The service has no user-management page.
 - The extension proxy depends on the public behavior of the Zed extension service.
-- Perform a two-user collaboration acceptance test before production use.

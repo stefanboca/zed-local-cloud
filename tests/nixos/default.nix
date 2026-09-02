@@ -236,6 +236,7 @@ in {
           "20260724000000",
           "20260806000000",
           "20260823000000",
+          "20260902000000",
       ], migrations
       collab_schema_checksum = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
@@ -318,10 +319,10 @@ in {
       ), extension_download
       release_asset = json.loads(machine.succeed(
           "curl --insecure --silent --show-error "
-          "'https://localhost/releases/stable/1.16.1/asset?asset=zed-remote-server'"
+          "'https://localhost/releases/stable/1.17.2/asset?asset=zed-remote-server'"
       ))
       assert release_asset["path"] == (
-          "/releases/stable/1.16.1/asset"
+          "/releases/stable/1.17.2/asset"
       ), release_asset
       assert release_asset["query"] == {
           "asset": ["zed-remote-server"]
@@ -471,7 +472,7 @@ in {
           "--command='SELECT count(*) FROM local_user_tokens WHERE user_id = 1'"
       ).strip() == "2"
 
-      known_token = "zed-1.16.1-contract-token"
+      known_token = "zed-1.17.2-contract-token"
       known_token_hash = hashlib.sha256(known_token.encode()).hexdigest()
       insert_token = (
           "INSERT INTO local_user_tokens (user_id, access_token_hash) "
