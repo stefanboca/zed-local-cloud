@@ -232,7 +232,7 @@ in {
           "systemctl show zed-collab.service --property=MainPID --value"
       ).strip()
       collab_command = machine.succeed(
-          f"tr '\0' '\n' </proc/{collab_wrapper_pid}/cmdline"
+          f"tr '\\0' '\\n' </proc/{collab_wrapper_pid}/cmdline"
       ).splitlines()
       assert collab_command[0].endswith("/secretspec"), collab_command
       assert "run" in collab_command, collab_command
@@ -244,7 +244,7 @@ in {
       collab_environment = dict(
           line.split("=", 1)
           for line in machine.succeed(
-              f"tr '\0' '\n' </proc/{collab_pid}/environ"
+              f"tr '\\0' '\\n' </proc/{collab_pid}/environ"
           ).splitlines()
           if "=" in line
       )
@@ -261,8 +261,8 @@ in {
       assert machine.succeed(
           "cat /run/credentials/livekit.service/livekit-secrets"
       ) == ${builtins.toJSON livekitKeysText}
-      assert machine.fail("test -e /run/zed-collab/crates/collab/.env.toml")
-      assert machine.fail("test -e /var/lib/zed/collab/.env.secret.toml")
+      machine.fail("test -e /run/zed-collab/crates/collab/.env.toml")
+      machine.fail("test -e /var/lib/zed/collab/.env.secret.toml")
 
       machine.succeed("systemctl restart zed-provision.service")
       assert machine.succeed(
