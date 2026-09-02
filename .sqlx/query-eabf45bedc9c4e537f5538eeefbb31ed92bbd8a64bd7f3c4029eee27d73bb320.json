@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT pg_advisory_xact_lock(hashtext(lower($1)))",
+  "query": "SELECT pg_advisory_xact_lock(hashtext($1))\n",
   "describe": {
     "columns": [
       {
@@ -19,5 +19,5 @@
       null
     ]
   },
-  "hash": "8c167ade46fda1812b49f9d2264acd438d089a7e5802a3859dd48f70b8f63199"
+  "hash": "eabf45bedc9c4e537f5538eeefbb31ed92bbd8a64bd7f3c4029eee27d73bb320"
 }

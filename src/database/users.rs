@@ -57,16 +57,12 @@ impl Database {
         let mut transaction = self.0.begin().await?;
 
         let identity_lock = oidc_identity_lock_key(&profile.issuer, &profile.subject);
-        sqlx::query!("SELECT pg_advisory_xact_lock(hashtext($1))", identity_lock)
+        sqlx::query_file!("queries/user/lock_oidc_identity.sql", identity_lock)
             .execute(&mut *transaction)
             .await?;
 
-        let existing_user_id = sqlx::query_scalar!(
-            r#"
-        SELECT user_id
-        FROM local_oidc_identities
-        WHERE issuer = $1 AND subject = $2
-        "#,
+        let existing_user_id = sqlx::query_file_scalar!(
+            "queries/user/find_oidc_identity.sql",
             &profile.issuer,
             &profile.subject,
         )
@@ -74,14 +70,8 @@ impl Database {
         .await?;
 
         let user_id = if let Some(user_id) = existing_user_id {
-            sqlx::query!(
-                r#"
-            UPDATE users
-            SET admin = $2,
-                email_address = $3,
-                name = $4
-            WHERE id = $1
-            "#,
+            sqlx::query_file!(
+                "queries/user/update_user.sql",
                 user_id,
                 admin,
                 profile.email_address.as_deref(),
@@ -90,16 +80,8 @@ impl Database {
             .execute(&mut *transaction)
             .await?;
 
-            sqlx::query!(
-                r#"
-            UPDATE local_user_profiles
-            SET avatar_url = $2,
-                name = $3,
-                email_address = $4,
-                upstream_is_staff = false,
-                updated_at = now()
-            WHERE user_id = $1
-            "#,
+            sqlx::query_file!(
+                "queries/user/update_profile.sql",
                 user_id,
                 &profile.avatar_url,
                 profile.name.as_deref(),
@@ -108,12 +90,8 @@ impl Database {
             .execute(&mut *transaction)
             .await?;
 
-            sqlx::query!(
-                r#"
-            UPDATE local_oidc_identities
-            SET updated_at = now()
-            WHERE issuer = $1 AND subject = $2
-            "#,
+            sqlx::query_file!(
+                "queries/user/touch_oidc_identity.sql",
                 &profile.issuer,
                 &profile.subject,
             )
@@ -121,12 +99,8 @@ impl Database {
             .await?;
             user_id
         } else {
-            let inserted = sqlx::query!(
-                r#"
-            INSERT INTO users (admin, email_address, connected_once, name)
-            VALUES ($1, $2, false, $3)
-            RETURNING id, metrics_id
-            "#,
+            let inserted = sqlx::query_file!(
+                "queries/user/insert_user.sql",
                 admin,
                 profile.email_address.as_deref(),
                 profile.name.as_deref(),
@@ -147,37 +121,21 @@ impl Database {
                     })
                     .unwrap_or("user"),
             );
-            sqlx::query!(
-                "SELECT pg_advisory_xact_lock(hashtext(lower($1)))",
-                &username
-            )
-            .execute(&mut *transaction)
-            .await?;
-            let username_taken = sqlx::query_scalar!(
-            r#"SELECT EXISTS(SELECT 1 FROM local_user_profiles WHERE lower(github_login) = lower($1)) AS "exists!""#,
-            &username,
-        )
-        .fetch_one(&mut *transaction)
-        .await?;
+            sqlx::query_file!("queries/user/lock_username.sql", &username)
+                .execute(&mut *transaction)
+                .await?;
+            let username_taken =
+                sqlx::query_file_scalar!("queries/user/username_exists.sql", &username)
+                    .fetch_one(&mut *transaction)
+                    .await?;
             let username = if username_taken {
                 format!("{username}-{user_id}")
             } else {
                 username
             };
 
-            sqlx::query!(
-                r#"
-            INSERT INTO local_user_profiles (
-                user_id,
-                github_login,
-                avatar_url,
-                name,
-                email_address,
-                metrics_id,
-                upstream_is_staff
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, false)
-            "#,
+            sqlx::query_file!(
+                "queries/user/insert_profile.sql",
                 user_id,
                 username,
                 &profile.avatar_url,
@@ -188,11 +146,8 @@ impl Database {
             .execute(&mut *transaction)
             .await?;
 
-            sqlx::query!(
-                r#"
-            INSERT INTO local_oidc_identities (issuer, subject, user_id)
-            VALUES ($1, $2, $3)
-            "#,
+            sqlx::query_file!(
+                "queries/user/insert_oidc_identity.sql",
                 &profile.issuer,
                 &profile.subject,
                 user_id,
@@ -202,11 +157,8 @@ impl Database {
             user_id
         };
 
-        sqlx::query!(
-            r#"
-        INSERT INTO local_user_tokens (user_id, access_token_hash)
-        VALUES ($1, $2)
-        "#,
+        sqlx::query_file!(
+            "queries/user/insert_token.sql",
             user_id,
             hash_access_token(access_token),
         )
@@ -222,24 +174,9 @@ impl Database {
         user_id: i32,
         access_token: &str,
     ) -> sqlx::Result<Option<AuthenticatedLocalUser>> {
-        sqlx::query_as!(
+        sqlx::query_file_as!(
             AuthenticatedLocalUser,
-            r#"
-        SELECT
-            profiles.user_id,
-            'local-' || profiles.user_id::text AS "stable_id!",
-            profiles.github_login AS "username!",
-            profiles.github_login,
-            profiles.avatar_url,
-            profiles.name,
-            profiles.metrics_id,
-            users.admin,
-            users.connected_once
-        FROM local_user_tokens tokens
-        JOIN local_user_profiles profiles ON profiles.user_id = tokens.user_id
-        JOIN users ON users.id = profiles.user_id
-        WHERE tokens.user_id = $1 AND tokens.access_token_hash = $2
-        "#,
+            "queries/user/authenticated.sql",
             user_id,
             hash_access_token(access_token),
         )
@@ -252,69 +189,28 @@ impl Database {
         user_id: i32,
         access_token: &str,
     ) -> sqlx::Result<bool> {
-        sqlx::query_scalar!(
-            r#"
-        SELECT EXISTS(
-            SELECT 1
-            FROM local_user_tokens
-            WHERE user_id = $1 AND access_token_hash = $2
-        ) AS "exists!"
-        "#,
+        sqlx::query_file_scalar!(
+            "queries/user/cached_token_is_valid.sql",
             user_id,
-            hash_access_token(access_token),
+            hash_access_token(access_token)
         )
         .fetch_one(&self.0)
         .await
     }
 
     pub async fn users_by_ids(&self, user_ids: &[i32]) -> sqlx::Result<Vec<LocalUser>> {
-        sqlx::query_as!(
-            LocalUser,
-            r#"
-        SELECT
-            profiles.user_id,
-            'local-' || profiles.user_id::text AS "stable_id!",
-            profiles.github_login AS "username!",
-            profiles.github_login,
-            profiles.avatar_url,
-            profiles.name,
-            users.admin,
-            users.connected_once
-        FROM unnest($1::integer[]) WITH ORDINALITY AS requested(user_id, position)
-        JOIN local_user_profiles profiles ON profiles.user_id = requested.user_id
-        JOIN users ON users.id = profiles.user_id
-        ORDER BY requested.position
-        "#,
-            user_ids,
-        )
-        .fetch_all(&self.0)
-        .await
+        sqlx::query_file_as!(LocalUser, "queries/user/by_ids.sql", user_ids,)
+            .fetch_all(&self.0)
+            .await
     }
 
     pub async fn user_by_github_login(
         &self,
         github_login: &str,
     ) -> sqlx::Result<Option<LocalUser>> {
-        sqlx::query_as!(
-            LocalUser,
-            r#"
-        SELECT
-            profiles.user_id,
-            'local-' || profiles.user_id::text AS "stable_id!",
-            profiles.github_login AS "username!",
-            profiles.github_login,
-            profiles.avatar_url,
-            profiles.name,
-            users.admin,
-            users.connected_once
-        FROM local_user_profiles profiles
-        JOIN users ON users.id = profiles.user_id
-        WHERE lower(profiles.github_login) = lower($1)
-        "#,
-            github_login,
-        )
-        .fetch_optional(&self.0)
-        .await
+        sqlx::query_file_as!(LocalUser, "queries/user/by_github_login.sql", github_login,)
+            .fetch_optional(&self.0)
+            .await
     }
 
     pub async fn fuzzy_search_users(
@@ -322,34 +218,9 @@ impl Database {
         query: &str,
         limit: i64,
     ) -> sqlx::Result<Vec<LocalUser>> {
-        sqlx::query_as!(
-            LocalUser,
-            r#"
-        SELECT
-            profiles.user_id,
-            'local-' || profiles.user_id::text AS "stable_id!",
-            profiles.github_login AS "username!",
-            profiles.github_login,
-            profiles.avatar_url,
-            profiles.name,
-            users.admin,
-            users.connected_once
-        FROM local_user_profiles profiles
-        JOIN users ON users.id = profiles.user_id
-        WHERE strpos(lower(profiles.github_login), lower($1)) > 0
-           OR strpos(lower(coalesce(profiles.name, '')), lower($1)) > 0
-        ORDER BY
-            lower(profiles.github_login) = lower($1) DESC,
-            left(lower(profiles.github_login), length($1)) = lower($1) DESC,
-            length(profiles.github_login),
-            lower(profiles.github_login)
-        LIMIT $2
-        "#,
-            query,
-            limit,
-        )
-        .fetch_all(&self.0)
-        .await
+        sqlx::query_file_as!(LocalUser, "queries/user/fuzzy_search.sql", query, limit,)
+            .fetch_all(&self.0)
+            .await
     }
 
     pub async fn fuzzy_search_channel_members(
@@ -358,35 +229,9 @@ impl Database {
         query: &str,
         limit: i64,
     ) -> sqlx::Result<Vec<ChannelMemberUser>> {
-        sqlx::query_as!(
+        sqlx::query_file_as!(
             ChannelMemberUser,
-            r#"
-        SELECT
-            profiles.user_id,
-            'local-' || profiles.user_id::text AS "stable_id!",
-            profiles.github_login AS "username!",
-            profiles.github_login,
-            profiles.avatar_url,
-            profiles.name,
-            users.admin,
-            users.connected_once,
-            channel_members.accepted,
-            channel_members.role
-        FROM channel_members
-        JOIN local_user_profiles profiles ON profiles.user_id = channel_members.user_id
-        JOIN users ON users.id = profiles.user_id
-        WHERE channel_members.channel_id = $1
-          AND (
-              strpos(lower(profiles.github_login), lower($2)) > 0
-              OR strpos(lower(coalesce(profiles.name, '')), lower($2)) > 0
-          )
-        ORDER BY
-            lower(profiles.github_login) = lower($2) DESC,
-            left(lower(profiles.github_login), length($2)) = lower($2) DESC,
-            length(profiles.github_login),
-            lower(profiles.github_login)
-        LIMIT $3
-        "#,
+            "queries/user/fuzzy_search_channel_members.sql",
             channel_id,
             query,
             limit,

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            profiles.user_id,\n            'local-' || profiles.user_id::text AS \"stable_id!\",\n            profiles.github_login AS \"username!\",\n            profiles.github_login,\n            profiles.avatar_url,\n            profiles.name,\n            profiles.metrics_id,\n            users.admin,\n            users.connected_once\n        FROM local_user_tokens tokens\n        JOIN local_user_profiles profiles ON profiles.user_id = tokens.user_id\n        JOIN users ON users.id = profiles.user_id\n        WHERE tokens.user_id = $1 AND tokens.access_token_hash = $2\n        ",
+  "query": "SELECT\n    profiles.user_id,\n    'local-' || profiles.user_id::text AS \"stable_id!\",\n    profiles.github_login AS \"username!\",\n    profiles.github_login,\n    profiles.avatar_url,\n    profiles.name,\n    profiles.metrics_id,\n    users.admin,\n    users.connected_once\nFROM local_user_tokens tokens\nJOIN local_user_profiles profiles ON profiles.user_id = tokens.user_id\nJOIN users ON users.id = profiles.user_id\nWHERE tokens.user_id = $1 AND tokens.access_token_hash = $2\n",
   "describe": {
     "columns": [
       {
@@ -116,5 +116,5 @@
       false
     ]
   },
-  "hash": "a18b81f795a6bd0c180403fd6b065c27e2b13f3be0fbd6d03028147f367c0e44"
+  "hash": "93d60c76707b4c9c8de3b7ab2b49874716fcdba7b54ef4afbecb45938ba6726c"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT EXISTS(\n            SELECT 1\n            FROM local_user_tokens\n            WHERE user_id = $1 AND access_token_hash = $2\n        ) AS \"exists!\"\n        ",
+  "query": "SELECT EXISTS(\n    SELECT 1\n    FROM local_user_tokens\n    WHERE user_id = $1 AND access_token_hash = $2\n) AS \"exists!\"\n",
   "describe": {
     "columns": [
       {
@@ -20,5 +20,5 @@
       null
     ]
   },
-  "hash": "d34968c928f409b647c73b3ae0175089cb92aa5f830cfa67f7027f56980e5567"
+  "hash": "9ae58b865c938998e906a3229116a3e98c52c0dc22fafe3f75c744b408ee35a2"
 }

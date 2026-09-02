@@ -19,6 +19,7 @@ in
         (fileFilter (file: hasPrefix "Cargo" file.name) ../..)
         ../../.sqlx
         ../../migrations
+        ../../queries
       ];
     };
 

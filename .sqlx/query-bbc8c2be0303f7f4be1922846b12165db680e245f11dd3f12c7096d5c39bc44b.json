@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            profiles.user_id,\n            'local-' || profiles.user_id::text AS \"stable_id!\",\n            profiles.github_login AS \"username!\",\n            profiles.github_login,\n            profiles.avatar_url,\n            profiles.name,\n            users.admin,\n            users.connected_once\n        FROM unnest($1::integer[]) WITH ORDINALITY AS requested(user_id, position)\n        JOIN local_user_profiles profiles ON profiles.user_id = requested.user_id\n        JOIN users ON users.id = profiles.user_id\n        ORDER BY requested.position\n        ",
+  "query": "SELECT\n    profiles.user_id,\n    'local-' || profiles.user_id::text AS \"stable_id!\",\n    profiles.github_login AS \"username!\",\n    profiles.github_login,\n    profiles.avatar_url,\n    profiles.name,\n    users.admin,\n    users.connected_once\nFROM local_user_profiles profiles\nJOIN users ON users.id = profiles.user_id\nWHERE lower(profiles.github_login) = lower($1)\n",
   "describe": {
     "columns": [
       {
@@ -89,7 +89,7 @@
     ],
     "parameters": {
       "Left": [
-        "Int4Array"
+        "Text"
       ]
     },
     "nullable": [
@@ -103,5 +103,5 @@
       false
     ]
   },
-  "hash": "a32a36fdf449c6972966fae97c449c8099dd4d7999badd2613fc698e6301df66"
+  "hash": "bbc8c2be0303f7f4be1922846b12165db680e245f11dd3f12c7096d5c39bc44b"
 }

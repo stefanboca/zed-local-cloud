@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO local_user_tokens (user_id, access_token_hash)\nVALUES ($1, $2)\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "38f73e717a606be0a8d1681827a8bf0e33c63afed8a5334959f4ed3ceb366b61"
+}

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            profiles.user_id,\n            'local-' || profiles.user_id::text AS \"stable_id!\",\n            profiles.github_login AS \"username!\",\n            profiles.github_login,\n            profiles.avatar_url,\n            profiles.name,\n            users.admin,\n            users.connected_once,\n            channel_members.accepted,\n            channel_members.role\n        FROM channel_members\n        JOIN local_user_profiles profiles ON profiles.user_id = channel_members.user_id\n        JOIN users ON users.id = profiles.user_id\n        WHERE channel_members.channel_id = $1\n          AND (\n              strpos(lower(profiles.github_login), lower($2)) > 0\n              OR strpos(lower(coalesce(profiles.name, '')), lower($2)) > 0\n          )\n        ORDER BY\n            lower(profiles.github_login) = lower($2) DESC,\n            left(lower(profiles.github_login), length($2)) = lower($2) DESC,\n            length(profiles.github_login),\n            lower(profiles.github_login)\n        LIMIT $3\n        ",
+  "query": "SELECT\n    profiles.user_id,\n    'local-' || profiles.user_id::text AS \"stable_id!\",\n    profiles.github_login AS \"username!\",\n    profiles.github_login,\n    profiles.avatar_url,\n    profiles.name,\n    users.admin,\n    users.connected_once,\n    channel_members.accepted,\n    channel_members.role\nFROM channel_members\nJOIN local_user_profiles profiles ON profiles.user_id = channel_members.user_id\nJOIN users ON users.id = profiles.user_id\nWHERE channel_members.channel_id = $1\n  AND (\n      strpos(lower(profiles.github_login), lower($2)) > 0\n      OR strpos(lower(coalesce(profiles.name, '')), lower($2)) > 0\n  )\nORDER BY\n    lower(profiles.github_login) = lower($2) DESC,\n    left(lower(profiles.github_login), length($2)) = lower($2) DESC,\n    length(profiles.github_login),\n    lower(profiles.github_login)\nLIMIT $3\n",
   "describe": {
     "columns": [
       {
@@ -129,5 +129,5 @@
       false
     ]
   },
-  "hash": "19e3babe009e615ec0d7b50c9bc22a094e56227a5158c242604adabeead9bbc3"
+  "hash": "cf093dc0e6a6a36635713d77d464a12a1d1e0ed45d90edbe0abd02e0da6c456c"
 }
