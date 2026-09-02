@@ -10,11 +10,11 @@ SELECT
 FROM local_user_profiles AS profiles
     INNER JOIN users ON profiles.user_id = users.id
 WHERE
-    strpos(lower(profiles.github_login), lower($1)) > 0
-    OR strpos(lower(coalesce(profiles.name, '')), lower($1)) > 0
+    lower(profiles.github_login) % lower($1)
+    OR lower($1) <% lower(coalesce(profiles.name, ''))
 ORDER BY
-    lower(profiles.github_login) = lower($1) DESC,
-    left(lower(profiles.github_login), length($1)) = lower($1) DESC,
-    length(profiles.github_login),
-    lower(profiles.github_login)
+    greatest(
+        similarity(lower(profiles.github_login), lower($1)),
+        word_similarity(lower($1), lower(coalesce(profiles.name, '')))
+    ) DESC
 LIMIT $2

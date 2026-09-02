@@ -1,7 +1,10 @@
-[sqruff]
+[sqruff.core]
 dialect = "postgres"
 exclude_rules = ["RF05"]
 rules = "all"
+
+[sqruff.dialect.postgres]
+pg_trgm = true
 
 [sqruff.indentation]
 indent_unit = "space"

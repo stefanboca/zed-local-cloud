@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    profiles.user_id,\n    profiles.github_login AS \"username!\",\n    profiles.github_login,\n    profiles.avatar_url,\n    profiles.name,\n    users.admin,\n    users.connected_once,\n    'local-' || profiles.user_id::text AS \"stable_id!\"\nFROM local_user_profiles AS profiles\n    INNER JOIN users ON profiles.user_id = users.id\nWHERE\n    strpos(lower(profiles.github_login), lower($1)) > 0\n    OR strpos(lower(coalesce(profiles.name, '')), lower($1)) > 0\nORDER BY\n    lower(profiles.github_login) = lower($1) DESC,\n    left(lower(profiles.github_login), length($1)) = lower($1) DESC,\n    length(profiles.github_login),\n    lower(profiles.github_login)\nLIMIT $2\n",
+  "query": "SELECT\n    profiles.user_id,\n    profiles.github_login AS \"username!\",\n    profiles.github_login,\n    profiles.avatar_url,\n    profiles.name,\n    users.admin,\n    users.connected_once,\n    channel_members.accepted,\n    channel_members.role,\n    'local-' || profiles.user_id::text AS \"stable_id!\"\nFROM channel_members\n    INNER JOIN\n        local_user_profiles AS profiles\n        ON channel_members.user_id = profiles.user_id\n    INNER JOIN users ON profiles.user_id = users.id\nWHERE\n    channel_members.channel_id = $1\n    AND (\n        lower(profiles.github_login) % lower($2)\n        OR lower($2) <% lower(coalesce(profiles.name, ''))\n    )\nORDER BY\n    greatest(\n        similarity(lower(profiles.github_login), lower($2)),\n        word_similarity(lower($2), lower(coalesce(profiles.name, '')))\n    ) DESC\nLIMIT $3\n",
   "describe": {
     "columns": [
       {
@@ -82,6 +82,28 @@
       },
       {
         "ordinal": 7,
+        "name": "accepted",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "channel_members",
+            "name": "accepted"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "role",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "channel_members",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "stable_id!",
         "type_info": "Text",
         "origin": "Expression"
@@ -89,6 +111,7 @@
     ],
     "parameters": {
       "Left": [
+        "Int4",
         "Text",
         "Int8"
       ]
@@ -101,8 +124,10 @@
       true,
       false,
       false,
+      false,
+      false,
       null
     ]
   },
-  "hash": "ed51cb9d4d97d10f2ee5864fe48376b790b739e60cb8f534ae200a4566d53f73"
+  "hash": "73a7e153c2fe585fbb9eaee46a4064b048a1d49f199d8813e9080efea16a3d99"
 }

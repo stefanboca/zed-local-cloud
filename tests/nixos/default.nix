@@ -64,6 +64,7 @@ in {
 
       for unit in [
           "postgresql.target",
+          "zed-postgresql-extensions.service",
           "fake-extensions.service",
           "oidc-provider-mock.service",
           "zed-credentials.service",
@@ -112,6 +113,15 @@ in {
       assert machine.succeed(
           "systemctl show zed-local-cloud.service --property=Type --value"
       ).strip() == "notify"
+      for unit in ["zed-local-cloud.service", "zed-collab.service"]:
+          requires = set(machine.succeed(
+              f"systemctl show {unit} --property=Requires --value"
+          ).split())
+          assert "postgresql.target" in requires, (unit, requires)
+          assert "zed-postgresql-extensions.service" in requires, (
+              unit,
+              requires,
+          )
       collab_after = set(machine.succeed(
           "systemctl show zed-collab.service --property=After --value"
       ).split())
@@ -237,6 +247,7 @@ in {
           "20260806000000",
           "20260823000000",
           "20260902000000",
+          "20260902000001",
       ], migrations
       collab_schema_checksum = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
@@ -247,6 +258,13 @@ in {
           "9c7061b50bfb256cba83454be75fbed99be601e9214e80ba0bf461d90c346bb2"
           "ae26ab0d7219aab086b3f9d51d18433d"
       ), collab_schema_checksum
+
+      pg_trgm_is_current = machine.succeed(
+          "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
+          "--command=\"SELECT installed_version = default_version "
+          "FROM pg_available_extensions WHERE name = 'pg_trgm'\""
+      ).strip()
+      assert pg_trgm_is_current == "t", pg_trgm_is_current
 
       environments = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
@@ -553,7 +571,7 @@ in {
       ) == {"user": expected_internal_user}
       assert internal_request(
           "/internal/users/fuzzy_search",
-          {"query": "lic", "limit": 10},
+          {"query": "ali", "limit": 10},
       ) == {"users": [expected_internal_user]}
 
       machine.succeed(

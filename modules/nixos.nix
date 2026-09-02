@@ -5,9 +5,9 @@
   ...
 }: let
   inherit (lib.attrsets) optionalAttrs;
-  inherit (lib.lists) optional optionals;
+  inherit (lib.lists) optional;
   inherit (lib.meta) getExe getExe';
-  inherit (lib.modules) mkIf;
+  inherit (lib.modules) mkDefault mkIf;
   inherit (lib.options) mkEnableOption mkOption mkPackageOption;
   inherit (lib.strings) escapeShellArg optionalString;
   inherit (lib.types) bool int listOf port str;
@@ -43,11 +43,13 @@
       ZED_CLOUD_URL = cfg.collab.cloudUrl;
       ZED_ENVIRONMENT = "production";
     }
-    // lib.optionalAttrs cfg.livekit.enable {
+    // optionalAttrs cfg.livekit.enable {
       LIVEKIT_SERVER = "https://${cfg.virtualHost}/livekit";
     });
 
-  postgresqlDependencies = optional cfg.database.createLocally "postgresql.target";
+  postgresqlDependencies =
+    ["zed-postgresql-extensions.service"]
+    ++ optional cfg.database.createLocally "postgresql.target";
 
   hardening = {
     LockPersonality = true;
@@ -262,15 +264,15 @@ in {
 
     services.livekit = mkIf cfg.livekit.enable {
       enable = true;
-      keyFile = lib.mkDefault generatedLivekitKeyFile;
-      openFirewall = lib.mkDefault true;
+      keyFile = mkDefault generatedLivekitKeyFile;
+      openFirewall = mkDefault true;
     };
 
     services.caddy = {
       enable = true;
       virtualHosts.${cfg.virtualHost}.extraConfig = ''
         route {
-          ${lib.optionalString cfg.livekit.enable ''
+          ${optionalString cfg.livekit.enable ''
           handle_path /livekit/* {
             reverse_proxy 127.0.0.1:${toString config.services.livekit.settings.port}
           }
@@ -292,7 +294,7 @@ in {
           handle @releases {
             reverse_proxy ${cfg.upstreamCloudUrl}
           }
-          ${lib.optionalString cfg.localCloud.enable ''
+          ${optionalString cfg.localCloud.enable ''
           handle {
             reverse_proxy 127.0.0.1:${toString cfg.port}
           }
@@ -329,6 +331,28 @@ in {
         after = ["zed-credentials.service"];
       };
 
+      zed-postgresql-extensions = {
+        description = "Install and update Zed PostgreSQL extensions";
+        requires = optional cfg.database.createLocally "postgresql.target";
+        after = optional cfg.database.createLocally "postgresql.target";
+        before = [
+          "zed-collab.service"
+          "zed-local-cloud.service"
+        ];
+        serviceConfig = {
+          RemainAfterExit = true;
+          Type = "oneshot";
+          User = cfg.user;
+        };
+        script = ''
+          ${getExe' config.services.postgresql.finalPackage "psql"} \
+            --dbname ${escapeShellArg cfg.database.url} \
+            --set ON_ERROR_STOP=1 \
+            --command 'CREATE EXTENSION IF NOT EXISTS pg_trgm' \
+            --command 'ALTER EXTENSION pg_trgm UPDATE'
+        '';
+      };
+
       zed-local-cloud = mkIf cfg.localCloud.enable {
         description = "Zed local cloud service";
         requires = ["zed-credentials.service"] ++ postgresqlDependencies;
@@ -357,13 +381,13 @@ in {
         description = "Zed collaboration server";
         requires =
           ["zed-credentials.service"]
-          ++ optionals (!cfg.localCloud.enable) postgresqlDependencies;
+          ++ postgresqlDependencies;
         wants =
           optional cfg.localCloud.enable "zed-local-cloud.service"
           ++ optional cfg.livekit.enable "livekit.service";
         after =
           ["zed-credentials.service"]
-          ++ optionals (!cfg.localCloud.enable) postgresqlDependencies
+          ++ postgresqlDependencies
           ++ optional cfg.localCloud.enable "zed-local-cloud.service"
           ++ optional cfg.livekit.enable "livekit.service";
 

@@ -17,12 +17,12 @@ FROM channel_members
 WHERE
     channel_members.channel_id = $1
     AND (
-        strpos(lower(profiles.github_login), lower($2)) > 0
-        OR strpos(lower(coalesce(profiles.name, '')), lower($2)) > 0
+        lower(profiles.github_login) % lower($2)
+        OR lower($2) <% lower(coalesce(profiles.name, ''))
     )
 ORDER BY
-    lower(profiles.github_login) = lower($2) DESC,
-    left(lower(profiles.github_login), length($2)) = lower($2) DESC,
-    length(profiles.github_login),
-    lower(profiles.github_login)
+    greatest(
+        similarity(lower(profiles.github_login), lower($2)),
+        word_similarity(lower($2), lower(coalesce(profiles.name, '')))
+    ) DESC
 LIMIT $3
