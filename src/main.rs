@@ -6,7 +6,7 @@ use zed_local_cloud::{Config, Secrets, serve};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let (config, secrets) = if env::var_os("TOPCOAT_DEV_URL").is_some() {
+    let (config, secrets) = if cfg!(debug_assertions) && env::var_os("TOPCOAT_DEV_URL").is_some() {
         (Config::dev(), Secrets::dev())
     } else {
         (

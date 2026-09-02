@@ -171,6 +171,9 @@ in {
           "stat --format='%U:%G %a' /var/lib/zed/internal-api-key"
       ).strip() == "zed:zed 600"
       assert machine.succeed(
+          "stat --format='%U:%G %a %s' /var/lib/zed/cookie-key"
+      ).strip() == "zed:zed 600 64"
+      assert machine.succeed(
           "stat --format='%U:%G %a' /var/lib/zed/livekit-keys"
       ).strip() == "zed:zed 600"
       for livekit_credential in ["livekit-api-key", "livekit-api-secret"]:
@@ -179,6 +182,9 @@ in {
               f"/var/lib/zed/{livekit_credential}"
           ).strip() == "zed:zed 600"
       key = machine.succeed("cat /var/lib/zed/internal-api-key")
+      cookie_key_hash = machine.succeed(
+          "sha256sum /var/lib/zed/cookie-key"
+      ).split()[0]
       assert len(base64.b64decode(key, validate=True)) == 128
       livekit_key = machine.succeed("cat /var/lib/zed/livekit-api-key")
       livekit_secret = machine.succeed("cat /var/lib/zed/livekit-api-secret")
@@ -219,6 +225,10 @@ in {
       assert "redirect_url" not in auth_config["oidc"]
       assert "test-client-secret" not in auth_config_text
       assert machine.succeed(
+          "cmp /var/lib/zed/cookie-key "
+          "/run/credentials/zed-local-cloud.service/cookie-key"
+      ) == ""
+      assert machine.succeed(
           "cat /run/credentials/zed-local-cloud.service/oidc-client-secret"
       ) == "test-client-secret"
       assert machine.succeed(
@@ -256,6 +266,9 @@ in {
       ) == livekit_secret
 
       machine.succeed("systemctl restart zed-credentials.service")
+      assert machine.succeed(
+          "sha256sum /var/lib/zed/cookie-key"
+      ).split()[0] == cookie_key_hash
       assert machine.succeed(
           "cat /var/lib/zed/internal-api-key"
       ) == key

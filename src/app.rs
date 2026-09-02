@@ -6,7 +6,6 @@ mod native_app_signin;
 mod native_app_signin_succeeded;
 
 use anyhow::Context as _;
-use sha2::{Digest as _, Sha512};
 use topcoat::{
     Result,
     asset::{AssetBundle, RouterBuilderAssetExt},
@@ -38,7 +37,8 @@ pub async fn serve(config: Config, secrets: Secrets) -> anyhow::Result<()> {
     let database = Database::new(&config.database_url).await?;
     let user_updates = UserUpdates::connect(&config.database_url).await?;
     let oidc = Oidc::discover(&config, secrets.oidc_client_secret).await?;
-    let cookie_key = cookie_key(&secrets.internal_api_key);
+    let cookie_key = Key::try_from(secrets.cookie_key.as_slice())
+        .context("cookie-key credential must contain at least 64 bytes")?;
     let internal_api_key = InternalApiKey(secrets.internal_api_key);
 
     let router = routes()
@@ -91,13 +91,6 @@ fn notify_systemd_ready() -> std::io::Result<()> {
 #[cfg(not(target_os = "linux"))]
 fn notify_systemd_ready() -> std::io::Result<()> {
     Ok(())
-}
-
-fn cookie_key(internal_api_key: &str) -> Key {
-    let mut key_material = Sha512::new();
-    key_material.update(b"zed-local-cloud OIDC cookie key\0");
-    key_material.update(internal_api_key.as_bytes());
-    Key::derive_from(&key_material.finalize())
 }
 
 pub fn routes() -> RouterBuilder {

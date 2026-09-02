@@ -158,9 +158,10 @@ derived URL with the OIDC provider.
 LiveKit is enabled by default through the upstream NixOS `services.livekit`
 module. Caddy publishes it at `https://<virtualHost>/livekit`, and the collab
 server receives that public URL plus the matching API key and secret. The
-upstream module's firewall support is enabled by default. Configure ports,
-the RTC IP behavior, Redis, or the package directly under `services.livekit`.
-Set `services.zed-local-cloud.livekit.enable = false` to disable the whole
+integration opens only LiveKit's configured UDP RTC port range; its TCP API
+port remains behind Caddy. Configure ports, the RTC IP behavior, Redis, or the
+package directly under `services.livekit`. Set
+`services.zed-local-cloud.livekit.enable = false` to disable the whole
 integration.
 
 On first start, `zed-credentials` runs `livekit-server generate-keys`. It
@@ -188,14 +189,15 @@ Set `services.zed-local-cloud.database.createLocally = false` for an external
 database. Then set `services.zed-local-cloud.database.url` to the external
 database URL.
 
-The `zed-credentials` service creates a 128-byte internal API key on its first
-run. It writes only the raw key to `/var/lib/zed/internal-api-key`. Later runs
-keep the same non-empty file. The file mode is `0600`. The module loads this
-file as the `internal-api-key` systemd credential. The generated TOML
-configuration does not contain the key or its path.
+The `zed-credentials` service creates a 64-byte cookie key and a 128-byte
+internal API key on its first run. It stores them in `/var/lib/zed/cookie-key`
+and `/var/lib/zed/internal-api-key`. Later runs keep the same non-empty files.
+Their file mode is `0600`. The module loads them as the `cookie-key` and
+`internal-api-key` systemd credentials. The generated TOML configuration does
+not contain either key or path.
 
-The OIDC and internal API secrets each have a separate raw-value file. Do not
-use TOML syntax in either file. An externally managed LiveKit key file instead
+The cookie, OIDC, and internal API secrets each have a separate raw-value file.
+Do not use TOML syntax in them. An externally managed LiveKit key file instead
 uses LiveKit's `key: secret` format described above.
 
 The local cloud applies all migrations in this project before it starts its
@@ -297,6 +299,7 @@ paths for your installation.
 
 ```sh
 umask 077
+openssl rand -out /var/lib/zed/cookie-key 64
 openssl rand -base64 128 | tr -d '\n' > /var/lib/zed/internal-api-key
 ```
 
@@ -322,9 +325,10 @@ admin_value = "zed-admin"
 The local cloud constructs the OIDC redirect URL from `base_url`. It sets the
 path to `/auth/oidc/callback` and keeps the configured scheme and authority.
 
-Put files named `internal-api-key` and `oidc-client-secret` in one private
-directory. Set `CREDENTIALS_DIRECTORY` to that directory when you run the
-service outside systemd.
+Put files named `cookie-key`, `internal-api-key`, and `oidc-client-secret` in
+one private directory. The cookie key must contain at least 64 bytes. Set
+`CREDENTIALS_DIRECTORY` to that directory when you run the service outside
+systemd.
 
 Start the collaboration server from the compatible Zed source tree:
 
@@ -422,8 +426,9 @@ systemd credentials. `RUST_LOG` can override the configured tracing filter.
 | `oidc.admin_value` | `admin`                          | Set the administrator claim value                         |
 
 Do not put secret values in the TOML file. The service requires the systemd
-credentials `internal-api-key` and `oidc-client-secret`. It removes leading
-and trailing white space when it reads each credential.
+credentials `cookie-key`, `internal-api-key`, and `oidc-client-secret`. The
+cookie key is binary and is read unchanged. Leading and trailing white space is
+removed from the two text credentials.
 
 ## Database ownership
 

@@ -15,8 +15,6 @@
   cfg = config.services.zed-local-cloud;
 
   generatedLivekitKeyFile = "/var/lib/zed/livekit-keys";
-  livekitApiKeyFile = "/var/lib/zed/livekit-api-key";
-  livekitApiSecretFile = "/var/lib/zed/livekit-api-secret";
   livekitKeyFile = toString config.services.livekit.keyFile;
 
   localCloudConfig = (pkgs.formats.toml {}).generate "zed-local-cloud.toml" {
@@ -265,8 +263,14 @@ in {
     services.livekit = mkIf cfg.livekit.enable {
       enable = true;
       keyFile = mkDefault generatedLivekitKeyFile;
-      openFirewall = mkDefault true;
     };
+
+    networking.firewall.allowedUDPPortRanges = mkIf cfg.livekit.enable [
+      {
+        from = config.services.livekit.settings.rtc.port_range_start;
+        to = config.services.livekit.settings.rtc.port_range_end;
+      }
+    ];
 
     services.caddy = {
       enable = true;
@@ -371,7 +375,8 @@ in {
             StateDirectoryMode = "0700";
             User = cfg.user;
             LoadCredential = [
-              "internal-api-key:/var/lib/zed/internal-api-key"
+              "cookie-key:%S/zed/cookie-key"
+              "internal-api-key:%S/zed/internal-api-key"
               "oidc-client-secret:${toString cfg.oidc.clientSecretFile}"
             ];
           };
@@ -429,8 +434,8 @@ in {
           }
           // optionalAttrs cfg.livekit.enable {
             LoadCredential = [
-              "livekit-api-key:${livekitApiKeyFile}"
-              "livekit-api-secret:${livekitApiSecretFile}"
+              "livekit-api-key:%S/zed/livekit-api-key"
+              "livekit-api-secret:%S/zed/livekit-api-secret"
             ];
           };
       };
@@ -438,16 +443,20 @@ in {
       zed-credentials = {
         description = "Initialize the local Zed credentials";
         script = ''
-          secret_file="$STATE_DIRECTORY/internal-api-key"
+          cookie_key_file="$STATE_DIRECTORY/cookie-key"
+          internal_api_key_file="$STATE_DIRECTORY/internal-api-key"
           (
             set -euo pipefail
             umask 0077
-            if [ ! -s "$secret_file" ]; then
+            if [ ! -s "$cookie_key_file" ]; then
+              ${getExe pkgs.openssl} rand -out "$cookie_key_file" 64
+            fi
+            if [ ! -s "$internal_api_key_file" ]; then
               key="$(
                 ${getExe pkgs.openssl} rand -base64 128 \
                   | ${getExe' pkgs.coreutils "tr"} -d '\n'
               )"
-              printf '%s' "$key" >"$secret_file"
+              printf '%s' "$key" >"$internal_api_key_file"
             fi
           )
 
@@ -465,13 +474,13 @@ in {
               }
 
               ${optionalString (livekitKeyFile == generatedLivekitKeyFile) ''
-              if [ ! -s "${livekitApiKeyFile}" ] || [ ! -s "${livekitApiSecretFile}" ]; then
+              if [ ! -s "$STATE_DIRECTORY/livekit-api-key" ] || [ ! -s "$STATE_DIRECTORY/livekit-api-secret" ]; then
                 generated="$(${getExe config.services.livekit.package} generate-keys)"
                 livekit_key="$(printf '%s\n' "$generated" | sed -n 's/^API Key:[[:space:]]*//p')"
                 livekit_secret="$(printf '%s\n' "$generated" | sed -n 's/^API Secret:[[:space:]]*//p')"
               else
-                livekit_key="$(< "${livekitApiKeyFile}")"
-                livekit_secret="$(< "${livekitApiSecretFile}")"
+                livekit_key="$(< "$STATE_DIRECTORY/livekit-api-key")"
+                livekit_secret="$(< "$STATE_DIRECTORY/livekit-api-secret")"
               fi
             ''}
               ${optionalString (livekitKeyFile != generatedLivekitKeyFile) ''
@@ -484,10 +493,10 @@ in {
                 exit 1
               fi
 
-              printf '%s' "$livekit_key" >"${livekitApiKeyFile}"
-              printf '%s' "$livekit_secret" >"${livekitApiSecretFile}"
+              printf '%s' "$livekit_key" >"$STATE_DIRECTORY/livekit-api-key"
+              printf '%s' "$livekit_secret" >"$STATE_DIRECTORY/livekit-api-secret"
               ${optionalString (livekitKeyFile == generatedLivekitKeyFile) ''
-              printf '%s: %s\n' "$livekit_key" "$livekit_secret" >"${generatedLivekitKeyFile}"
+              printf '%s: %s\n' "$livekit_key" "$livekit_secret" >"$STATE_DIRECTORY/livekit-keys"
             ''}
             )
           ''}

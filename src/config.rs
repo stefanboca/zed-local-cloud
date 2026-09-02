@@ -35,6 +35,7 @@ pub struct OidcConfig {
 }
 
 pub struct Secrets {
+    pub(crate) cookie_key: Vec<u8>,
     pub(crate) internal_api_key: String,
     pub(crate) oidc_client_secret: String,
 }
@@ -68,6 +69,7 @@ impl Config {
 impl Secrets {
     pub fn from_systemd() -> anyhow::Result<Self> {
         Ok(Self {
+            cookie_key: read_credential_bytes("cookie-key")?,
             internal_api_key: read_credential("internal-api-key")?,
             oidc_client_secret: read_credential("oidc-client-secret")?,
         })
@@ -75,6 +77,7 @@ impl Secrets {
 
     pub fn dev() -> Self {
         Self {
+            cookie_key: vec![0; 64],
             internal_api_key: "development-development-development".to_owned(),
             oidc_client_secret: "development".to_owned(),
         }
@@ -82,11 +85,16 @@ impl Secrets {
 }
 
 fn read_credential(name: &str) -> anyhow::Result<String> {
+    let value = String::from_utf8(read_credential_bytes(name)?)
+        .with_context(|| format!("credential {name} is not valid UTF-8"))?;
+    Ok(value.trim().to_owned())
+}
+
+fn read_credential_bytes(name: &str) -> anyhow::Result<Vec<u8>> {
     let directory =
         std::env::var("CREDENTIALS_DIRECTORY").context("CREDENTIALS_DIRECTORY is required")?;
-    let value = fs::read_to_string(PathBuf::from(directory).join(name))
-        .with_context(|| format!("reading credential {name}"))?;
-    Ok(value.trim().to_owned())
+    fs::read(PathBuf::from(directory).join(name))
+        .with_context(|| format!("reading credential {name}"))
 }
 
 fn default_bind_address() -> SocketAddr {
