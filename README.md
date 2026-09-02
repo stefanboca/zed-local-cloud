@@ -542,7 +542,8 @@ that Caddy removes local authorization data and cookies.
 
 ## Known limits
 
-- `/client/users/connect` keeps the WebSocket open. It does not send account-change events.
+`LISTEN`/`NOTIFY`, including across multiple local-cloud processes.
+
 - Hosted Zed AI is disabled for the local organization.
 - The service has no user-management page.
 - The extension proxy depends on the public behavior of the Zed extension service.

@@ -42,7 +42,17 @@ WITH
             existing_identity.user_id,
             $7 AS access_token_hash
         FROM existing_identity
+    ),
+
+    notified AS MATERIALIZED (
+        SELECT
+            existing_identity.user_id,
+            pg_notify(
+                'zed_local_cloud_user_updated',
+                existing_identity.user_id::text
+            ) AS notification
+        FROM existing_identity
     )
 
-SELECT existing_identity.user_id
-FROM existing_identity
+SELECT notified.user_id
+FROM notified

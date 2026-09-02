@@ -28,6 +28,7 @@ use crate::{
     config::{Config, InternalApiKey, Secrets},
     database::Database,
     oidc::Oidc,
+    user_updates::UserUpdates,
 };
 
 topcoat::router::not_found!();
@@ -35,6 +36,7 @@ topcoat::router::not_found!();
 pub async fn serve(config: Config, secrets: Secrets) -> anyhow::Result<()> {
     let bind_address = config.bind_address;
     let database = Database::new(&config.database_url).await?;
+    let user_updates = UserUpdates::connect(&config.database_url).await?;
     let oidc = Oidc::discover(&config, secrets.oidc_client_secret).await?;
     let cookie_key = cookie_key(&secrets.internal_api_key);
     let internal_api_key = InternalApiKey(secrets.internal_api_key);
@@ -46,6 +48,7 @@ pub async fn serve(config: Config, secrets: Secrets) -> anyhow::Result<()> {
         .app_context(database)
         .app_context(internal_api_key)
         .app_context(oidc)
+        .app_context(user_updates)
         .build();
 
     let listener = tokio::net::TcpListener::bind(bind_address)

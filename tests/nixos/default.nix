@@ -9,6 +9,33 @@
     zed-local-cloud
     zed-migrations
     ;
+
+  websocketNotificationClient =
+    pkgs.writers.writePython3 "websocket-notification-client" {
+      libraries = [pkgs.python3Packages.websocket-client];
+    } ''
+      import ssl
+      import sys
+      from pathlib import Path
+
+      import websocket
+
+      token, ready_file = sys.argv[1:]
+      socket = websocket.create_connection(
+          "wss://localhost/client/users/connect",
+          header=[
+              f"Authorization: 1 {token}",
+              "x-zed-protocol-version: 0",
+          ],
+          sslopt={"cert_reqs": ssl.CERT_NONE},
+          timeout=10,
+      )
+      Path(ready_file).touch()
+      message = socket.recv()
+      assert isinstance(message, bytes), type(message)
+      print(message.hex(), flush=True)
+      socket.close()
+    '';
 in {
   nixos-basic = pkgs.testers.runNixOSTest {
     name = "zed-local-cloud-basic";
@@ -499,6 +526,22 @@ in {
       machine.succeed(
           "runuser -u postgres -- psql --dbname=zed --set=ON_ERROR_STOP=1 "
           f"--command={shlex.quote(insert_token)}"
+      )
+
+      machine.execute(
+          "${websocketNotificationClient} "
+          f"{shlex.quote(known_token)} /tmp/user-update-ready "
+          ">/tmp/user-update-message 2>/tmp/user-update-error &"
+      )
+      machine.wait_until_succeeds("test -e /tmp/user-update-ready")
+      oidc_login()
+      machine.wait_until_succeeds("test -s /tmp/user-update-message")
+      user_update_message = machine.succeed(
+          "cat /tmp/user-update-message"
+      ).strip()
+      assert user_update_message == "6b5573657255706461746564", (
+          user_update_message,
+          machine.succeed("cat /tmp/user-update-error"),
       )
 
       def authenticate(token):

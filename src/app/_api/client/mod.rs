@@ -51,7 +51,7 @@ pub(super) fn parse_authorization_header(headers: &HeaderMap) -> Result<Credenti
     })
 }
 
-pub(super) async fn validate_cached_credentials(cx: &Cx) -> Result<()> {
+pub(super) async fn validate_cached_credentials(cx: &Cx) -> Result<Credentials> {
     let database = app_context::<Database>(cx);
     let credentials = parse_authorization_header(headers(cx))?;
     let valid = database
@@ -61,7 +61,7 @@ pub(super) async fn validate_cached_credentials(cx: &Cx) -> Result<()> {
     if !valid {
         return Err(unauthorized().into());
     }
-    Ok(())
+    Ok(credentials)
 }
 
 fn internal(context: &'static str, error: impl Into<anyhow::Error>) -> topcoat::Error {
