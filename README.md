@@ -534,6 +534,19 @@ The VM provisioning service applies all migrations in this project before
 collab starts. The host-side local cloud finds the same migration ledger and
 does not apply the migrations a second time.
 
+A changed query needs new SQLx offline metadata. The normal VM build cannot use
+a query before this metadata exists. Run the preparation app from the repository
+root:
+
+```sh
+nix run .#sqlx-prepare
+```
+
+The app starts a temporary PostgreSQL instance. It applies all migrations and
+updates `pg_trgm`. It then runs `cargo sqlx prepare` and stops PostgreSQL. The
+app removes the temporary database when it exits. It does not build or run the
+local cloud application before PostgreSQL is ready.
+
 The Nix development shell includes the version-matched Topcoat CLI and the
 Tailwind CSS CLI. In a second terminal, start the local cloud and UI:
 

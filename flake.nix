@@ -29,6 +29,8 @@
     };
 
     apps = forAllSystems (system: let
+      pkgs = nixpkgsFor.${system};
+      sqlxPrepare = import ./dev/sqlx-prepare.nix {inherit lib pkgs;};
       vm = lib.nixosSystem {
         inherit system;
         modules = [(import ./dev/vm.nix self)];
@@ -38,6 +40,11 @@
         type = "app";
         program = getExe vm.config.system.build.vm;
         meta.description = "Run Zed collaboration, PostgreSQL, and a mock OIDC provider in a development VM";
+      };
+      sqlx-prepare = {
+        type = "app";
+        program = getExe sqlxPrepare;
+        meta.description = "Prepare SQLx metadata with a temporary PostgreSQL database";
       };
     });
 
