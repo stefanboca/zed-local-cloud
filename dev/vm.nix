@@ -33,7 +33,7 @@ in {
       issuer_url = "http://localhost:${toString oidcPort}";
       client_id = "zed-local";
     };
-    oidc.clientSecretFile = toString (pkgs.writeText "zed-development-oidc-secret" "development");
+    secrets.oidcClientSecretFile = toString (pkgs.writeText "zed-development-oidc-secret" "development");
   };
   services.livekit.keyFile = livekitKeys;
 

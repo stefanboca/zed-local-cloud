@@ -71,7 +71,7 @@ in {
           issuer_url = "http://127.0.0.1:18080";
           client_id = "zed-local";
         };
-        oidc.clientSecretFile = toString (pkgs.writeText "test-oidc-client-secret" "test-client-secret");
+        secrets.oidcClientSecretFile = toString (pkgs.writeText "test-oidc-client-secret" "test-client-secret");
       };
       services.livekit.keyFile = livekitKeys;
 

@@ -15,8 +15,8 @@
 
   databaseUrl = "postgres://${cfg.user}@%2Frun%2Fpostgresql/${cfg.database.name}";
   databaseUrlFile =
-    if cfg.database.urlFile != null
-    then toString cfg.database.urlFile
+    if cfg.secrets.databaseUrlFile != null
+    then toString cfg.secrets.databaseUrlFile
     else pkgs.writeText "zed-database-url" databaseUrl;
 
   localCloudConfig = toml.generate "zed-local-cloud.toml" cfg.localCloud.settings;
@@ -167,14 +167,6 @@ in {
       description = "Upstream origin used for release and cloud routes.";
     };
 
-    oidc = {
-      clientSecretFile = mkOption {
-        type = str;
-        example = "/run/secrets/zed-oidc-client-secret";
-        description = "File that contains the OIDC client secret.";
-      };
-    };
-
     collab = {
       package = mkPackageOption pkgs "zed-collab" {};
 
@@ -242,6 +234,24 @@ in {
       };
     };
 
+    secrets = {
+      databaseUrlFile = mkOption {
+        type = nullOr str;
+        default = null;
+        example = "/run/secrets/zed-database-url";
+        description = ''
+          File that contains the PostgreSQL URL for collab and the local cloud.
+          This option is required when database.createLocally is false.
+        '';
+      };
+
+      oidcClientSecretFile = mkOption {
+        type = str;
+        example = "/run/secrets/zed-oidc-client-secret";
+        description = "File that contains the OIDC client secret.";
+      };
+    };
+
     database = {
       createLocally = mkOption {
         type = bool;
@@ -253,15 +263,6 @@ in {
         type = str;
         default = "zed";
         description = "Name of the shared collab database.";
-      };
-
-      urlFile = mkOption {
-        type = nullOr str;
-        default = null;
-        description = ''
-          File containing the PostgreSQL URL shared by collab and the local
-          cloud. Required when createLocally is false.
-        '';
       };
     };
   };
@@ -283,8 +284,8 @@ in {
         '';
       }
       {
-        assertion = cfg.database.createLocally || cfg.database.urlFile != null;
-        message = "services.zed-local-cloud.database.urlFile is required when createLocally is false.";
+        assertion = cfg.database.createLocally || cfg.secrets.databaseUrlFile != null;
+        message = "services.zed-local-cloud.secrets.databaseUrlFile is required when database.createLocally is false.";
       }
     ];
 
@@ -395,7 +396,7 @@ in {
             WorkingDirectory = "${cfg.package}/share/zed-local-cloud";
             LoadCredential = [
               "DATABASE_URL:${databaseUrlFile}"
-              "OIDC_CLIENT_SECRET:${toString cfg.oidc.clientSecretFile}"
+              "OIDC_CLIENT_SECRET:${toString cfg.secrets.oidcClientSecretFile}"
             ];
             Environment = ["XDG_STATE_HOME=%S/zed"];
           };
@@ -452,7 +453,7 @@ in {
             LoadCredential =
               [
                 "DATABASE_URL:${databaseUrlFile}"
-                "OIDC_CLIENT_SECRET:${toString cfg.oidc.clientSecretFile}"
+                "OIDC_CLIENT_SECRET:${toString cfg.secrets.oidcClientSecretFile}"
               ]
               ++ optional cfg.livekit.enable "LIVEKIT_KEYS:${toString config.services.livekit.keyFile}";
             RemainAfterExit = true;

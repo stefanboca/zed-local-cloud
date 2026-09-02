@@ -141,7 +141,7 @@ Use this example as a start:
               admin_claim = "groups";
               admin_value = "zed-admin";
             };
-            oidc.clientSecretFile = "/run/secrets/zed-oidc-client-secret";
+            secrets.oidcClientSecretFile = "/run/secrets/zed-oidc-client-secret";
           };
 
           services.livekit.keyFile = "/run/secrets/livekit-keys";
@@ -184,18 +184,18 @@ reads this credential. The provision command selects the specified entry. It
 writes only this key pair to the private collab TOML file. It does not copy the
 key file to the Nix store.
 
-Systemd loads `clientSecretFile` as the `OIDC_CLIENT_SECRET` credential. The
-local cloud reads the raw secret from its private credential directory. The
-TOML configuration does not contain the secret or its path. The service uses
-a confidential OIDC client and requires this secret.
+Systemd loads `secrets.oidcClientSecretFile` as the `OIDC_CLIENT_SECRET`
+credential. The local cloud reads the raw secret from its private credential
+directory. The TOML configuration does not contain the secret or its path. The
+service uses a confidential OIDC client and requires this secret.
 
 The module creates a local PostgreSQL database by default. It creates the
 `zed` system user and the `zed` database. It uses PostgreSQL peer
 authentication.
 
 Set `services.zed-local-cloud.database.createLocally = false` for an external
-database. Then set `services.zed-local-cloud.database.urlFile` to a runtime
-secret file containing the external database URL.
+database. Then set `services.zed-local-cloud.secrets.databaseUrlFile` to a
+runtime secret file. This file must contain the external database URL.
 
 The `zed-provision` service uses SecretSpec to create two keys on its first run.
 It creates a 64-byte cookie key and a 128-byte internal API key. It stores their
@@ -281,7 +281,7 @@ services.zed-local-cloud.localCloud.settings.oidc = {
   admin_claim = "groups";
   admin_value = "zed-admin";
 };
-services.zed-local-cloud.oidc.clientSecretFile =
+services.zed-local-cloud.secrets.oidcClientSecretFile =
   "/run/secrets/zed-oidc-client-secret";
 ```
 
