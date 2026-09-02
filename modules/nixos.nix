@@ -20,22 +20,42 @@
     else pkgs.writeText "zed-database-url" databaseUrl;
 
   localCloudConfig = toml.generate "zed-local-cloud.toml" cfg.localCloud.settings;
-  collabEnvironment = toml.generate "zed-collab.toml" cfg.collab.environment;
+  collabEnvironment =
+    lib.mapAttrs
+    (_: value:
+      if builtins.isBool value
+      then lib.boolToString value
+      else toString value)
+    cfg.collab.environment;
 
   postgresqlDependencies = optional cfg.database.createLocally "postgresql.target";
 
   provisionArguments =
     [
       "provision"
-      "--config"
-      (toString localCloudConfig)
-      "--collab-secret-file"
-      "%S/zed/collab/.env.secret.toml"
+      "--state-directory"
+      "%S/zed"
     ]
     ++ optionals cfg.livekit.enable [
       "--livekit-api-key"
       cfg.livekit.apiKey
     ];
+
+  collabArguments = [
+    "--file"
+    "${cfg.package}/share/zed-local-cloud/secretspec.toml"
+    "--reason"
+    "start Zed collab"
+    "run"
+    "--profile"
+    "production"
+    "--scope"
+    "collab"
+    "--"
+    (getExe cfg.collab.package)
+    "serve"
+    "collab"
+  ];
 
   hardening = {
     LockPersonality = true;
@@ -217,7 +237,7 @@ in {
             };
           };
         };
-        description = "Values written directly to collab's environment TOML file.";
+        description = "Environment variables passed directly to collab.";
       };
     };
 
@@ -395,7 +415,9 @@ in {
             User = cfg.user;
             WorkingDirectory = "${cfg.package}/share/zed-local-cloud";
             LoadCredential = [
+              "COOKIE_KEY:%S/zed/COOKIE_KEY"
               "DATABASE_URL:${databaseUrlFile}"
+              "INTERNAL_API_KEY:%S/zed/INTERNAL_API_KEY"
               "OIDC_CLIENT_SECRET:${toString cfg.secrets.oidcClientSecretFile}"
             ];
             Environment = ["XDG_STATE_HOME=%S/zed"];
@@ -416,26 +438,29 @@ in {
           ++ optional cfg.localCloud.enable "zed-local-cloud.service"
           ++ optional cfg.livekit.enable "livekit.service";
 
-        preStart = ''
-          mkdir -p "$RUNTIME_DIRECTORY/crates/collab"
-          ln -sf ${collabEnvironment} "$RUNTIME_DIRECTORY/crates/collab/.env.toml"
-          ln -sf "$STATE_DIRECTORY/collab/.env.secret.toml" \
-            "$RUNTIME_DIRECTORY/crates/collab/.env.secret.toml"
-        '';
-
         serviceConfig =
           hardening
           // {
-            ExecStart = "${getExe cfg.collab.package} serve collab";
+            ExecStart = "${getExe pkgs.secretspec} ${escapeShellArgs collabArguments}";
+            Environment =
+              lib.mapAttrsToList (name: value: "${name}=${value}") collabEnvironment
+              ++ ["XDG_STATE_HOME=%t/zed-collab"];
             Group = cfg.group;
+            LoadCredential =
+              [
+                "DATABASE_URL:${databaseUrlFile}"
+                "INTERNAL_API_KEY:%S/zed/INTERNAL_API_KEY"
+              ]
+              ++ optionals cfg.livekit.enable [
+                "LIVEKIT_KEY:%S/zed/LIVEKIT_KEY"
+                "LIVEKIT_SECRET:%S/zed/LIVEKIT_SECRET"
+              ];
             Restart = "on-failure";
             RestartSec = 5;
             RuntimeDirectory = "zed-collab";
             RuntimeDirectoryMode = "0700";
-            StateDirectory = "zed";
-            StateDirectoryMode = "0700";
             User = cfg.user;
-            WorkingDirectory = "%t/zed-collab";
+            WorkingDirectory = "${cfg.package}/share/zed-local-cloud";
           };
       };
 
@@ -451,10 +476,7 @@ in {
             Group = cfg.group;
             Environment = ["XDG_STATE_HOME=%S/zed"];
             LoadCredential =
-              [
-                "DATABASE_URL:${databaseUrlFile}"
-                "OIDC_CLIENT_SECRET:${toString cfg.secrets.oidcClientSecretFile}"
-              ]
+              ["DATABASE_URL:${databaseUrlFile}"]
               ++ optional cfg.livekit.enable "LIVEKIT_KEYS:${toString config.services.livekit.keyFile}";
             RemainAfterExit = true;
             RuntimeDirectory = "zed-provision";

@@ -7,53 +7,58 @@ use std::{
 };
 
 use anyhow::{Context as _, bail};
-use serde::Serialize;
 
-use crate::{config::Config, database::Database};
-
-#[derive(Serialize)]
-struct CollabSecrets<'a> {
-    #[serde(rename = "DATABASE_URL")]
-    database_url: &'a str,
-    #[serde(rename = "ZED_CLOUD_INTERNAL_API_KEY")]
-    internal_api_key: &'a str,
-    #[serde(rename = "LIVEKIT_KEY", skip_serializing_if = "Option::is_none")]
-    livekit_key: Option<&'a str>,
-    #[serde(rename = "LIVEKIT_SECRET", skip_serializing_if = "Option::is_none")]
-    livekit_secret: Option<&'a str>,
-}
+use crate::database::Database;
 
 pub async fn provision(
-    config: Config,
-    collab_secret_file: &Path,
+    state_directory: &Path,
     livekit_api_key: Option<&str>,
 ) -> anyhow::Result<()> {
-    let mut secrets = secretspec::Secrets::load()?.with_reason("provision Zed service secrets");
-    secrets.set_profile("production");
-    secrets.set_scope("generated");
-    secrets.check(true)?;
+    let mut generated =
+        secretspec::Secrets::load()?.with_reason("provision generated Zed service secrets");
+    generated.set_profile("production");
+    generated.set_scope("generated");
+    generated.set_provider(format!("file:{}", state_directory.display()));
+    generated.check(true)?;
 
-    let secrets = config.secrets()?;
+    let mut supplied =
+        secretspec::Secrets::load()?.with_reason("read administrator-supplied Zed secrets");
+    supplied.set_profile("production");
+    supplied.set_scope("provision");
+    let supplied = supplied.resolve()?;
+    if !supplied.is_ok() {
+        bail!(
+            "missing required provisioning secrets: {}",
+            supplied.missing_required.join(", ")
+        );
+    }
+    let database_url = supplied
+        .secrets
+        .get("DATABASE_URL")
+        .and_then(|secret| secret.value.as_deref())
+        .context("DATABASE_URL did not resolve to a value")?
+        .trim();
 
     // migrate the db and update pg_trgm
-    Database::new(secrets.database_url.trim()).await?;
+    Database::new(database_url).await?;
 
-    let livekit = match (secrets.livekit_keys.as_deref(), livekit_api_key) {
-        (Some(keys), Some(api_key)) => Some((api_key, find_livekit_secret(keys, api_key)?)),
-        (None, None) => None,
+    let livekit_keys = supplied
+        .secrets
+        .get("LIVEKIT_KEYS")
+        .and_then(|secret| secret.value.as_deref());
+    match (livekit_keys, livekit_api_key) {
+        (Some(keys), Some(api_key)) => {
+            write_atomic(&state_directory.join("LIVEKIT_KEY"), api_key)?;
+            write_atomic(
+                &state_directory.join("LIVEKIT_SECRET"),
+                &find_livekit_secret(keys, api_key)?,
+            )?;
+        }
+        (None, None) => {}
         (None, Some(_)) => bail!("LIVEKIT_KEYS is required when a LiveKit API key is configured"),
         (Some(_), None) => bail!("a LiveKit API key is required when LIVEKIT_KEYS is provided"),
     };
-    let collab_secrets = CollabSecrets {
-        database_url: secrets.database_url.trim(),
-        internal_api_key: secrets.internal_api_key.trim(),
-        livekit_key: livekit.as_ref().map(|(key, _)| *key),
-        livekit_secret: livekit.as_ref().map(|(_, secret)| secret.as_str()),
-    };
-    write_atomic(
-        collab_secret_file,
-        toml::to_string(&collab_secrets).context("encoding collab secrets")?,
-    )
+    Ok(())
 }
 
 fn find_livekit_secret(keys: &str, api_key: &str) -> anyhow::Result<String> {
@@ -68,7 +73,7 @@ fn find_livekit_secret(keys: &str, api_key: &str) -> anyhow::Result<String> {
     Ok(secret.clone())
 }
 
-fn write_atomic(path: &Path, contents: String) -> anyhow::Result<()> {
+fn write_atomic(path: &Path, contents: &str) -> anyhow::Result<()> {
     let parent = path
         .parent()
         .with_context(|| format!("{} has no parent directory", path.display()))?;

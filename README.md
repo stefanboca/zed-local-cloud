@@ -160,12 +160,12 @@ default URL uses the `https` scheme. The local cloud adds
 provider.
 
 The module writes `localCloud.settings` directly to the local cloud TOML file.
-It writes `collab.environment` directly to the collab `.env.toml` file. The
-module declares and checks all settings that it uses. You can add more TOML
-settings to `localCloud.settings`. The local cloud rejects settings that its
-configuration parser does not support. You can add scalar environment variables
-to `collab.environment`. A scalar value can be a string, integer, float, or
-Boolean value.
+It passes `collab.environment` directly to the collab process. The module
+declares and checks all settings that it uses. You can add more TOML settings to
+`localCloud.settings`. The local cloud rejects settings that its configuration
+parser does not support. You can add scalar environment variables to
+`collab.environment`. A scalar value can be a string, integer, float, or Boolean
+value.
 
 The upstream NixOS `services.livekit` module enables LiveKit by default. Caddy
 publishes LiveKit at `https://<virtualHost>/livekit`. The collab server receives
@@ -181,8 +181,8 @@ keys for multiple applications. It uses the LiveKit `key: secret` YAML format.
 Set `services.zed-local-cloud.livekit.apiKey` to the exact key name for Zed.
 Systemd supplies the complete file as the `LIVEKIT_KEYS` credential. SecretSpec
 reads this credential. The provision command selects the specified entry. It
-writes only this key pair to the private collab TOML file. It does not copy the
-key file to the Nix store.
+writes the selected key and secret to separate files in the Zed state directory.
+It does not copy the complete key file to the Nix store.
 
 Systemd loads `secrets.oidcClientSecretFile` as the `OIDC_CLIENT_SECRET`
 credential. The local cloud reads the raw secret from its private credential
@@ -197,16 +197,18 @@ Set `services.zed-local-cloud.database.createLocally = false` for an external
 database. Then set `services.zed-local-cloud.secrets.databaseUrlFile` to a
 runtime secret file. This file must contain the external database URL.
 
-The `zed-provision` service uses SecretSpec to create two keys on its first run.
-It creates a 64-byte cookie key and a 128-byte internal API key. It stores their
-base64 text in `/var/lib/zed/cookie-key` and
-`/var/lib/zed/internal-api-key`. Both files have mode `0600`. Later runs use the
-same values. The local cloud reads these files through the SecretSpec Rust API.
-During each activation, the service also runs the embedded SQLx migrations. It
-then updates the `pg_trgm` extension. Finally, it writes the persistent collab
-secret TOML file with one atomic operation. This file contains the database URL
-and the internal API key. It also contains the selected LiveKit pair when
-LiveKit is enabled.
+The `zed-provision` service uses an explicit file provider to create two keys on
+its first run. It creates a 64-byte cookie key and a 128-byte internal API key.
+It stores their base64 text in `/var/lib/zed/COOKIE_KEY` and
+`/var/lib/zed/INTERNAL_API_KEY`. Both files have mode `0600`. Later runs use the
+same values. During each activation, the service also runs the embedded SQLx
+migrations and updates the `pg_trgm` extension. If LiveKit is enabled, it writes
+`LIVEKIT_KEY` and `LIVEKIT_SECRET` to the same state directory.
+
+Systemd mounts the required files as service credentials. The local cloud reads
+its credentials through the SecretSpec Rust API. The collab service runs under
+`secretspec run`. SecretSpec puts only the `collab` scope in the collab process
+environment. The module does not create collab `.env.toml` files.
 
 The provision service does not depend on the local cloud service. Thus, it can
 prepare secrets and migrations when `localCloud.enable` is `false`.
@@ -336,40 +338,30 @@ admin_value = "zed-admin"
 The local cloud makes the OIDC redirect URL from `base_url`. It adds the
 `/auth/oidc/callback` path. It keeps the configured scheme and authority.
 
-Create `/path/to/zed/crates/collab/.env.toml` with these non-secret values:
-
-```toml
-DATABASE_MAX_CONNECTIONS = 5
-HTTP_PORT = 8080
-LOG_JSON = false
-RUST_LOG = "info"
-ZED_CLOUD_URL = "http://127.0.0.1:8787"
-ZED_ENVIRONMENT = "production"
-```
-
 Run the provision command before you start either application:
 
 ```sh
 cd /path/to/zed-local-cloud
 SECRETSPEC_PROVIDER=file:/run/secrets/zed \
   nix develop -c cargo run -- provision \
-  --config ./zed-local-cloud.toml \
-  --collab-secret-file /path/to/zed/crates/collab/.env.secret.toml
+  --state-directory /run/secrets/zed
 ```
 
-The provision command creates `cookie-key` and `internal-api-key` in the secret
-directory. It applies all database migrations and updates `pg_trgm`. It also
-writes the collab secret TOML file.
+The provision command creates `COOKIE_KEY` and `INTERNAL_API_KEY` in the state
+directory. It applies all database migrations and updates `pg_trgm`.
 
 For LiveKit, add a `LIVEKIT_KEYS` file to the secret directory. Use LiveKit
-YAML syntax in this file. Add `LIVEKIT_SERVER` to the collab environment file.
+YAML syntax in this file. Set `LIVEKIT_SERVER` in the collab environment.
 Pass the selected key name with `--livekit-api-key` to the provision command.
 
 Start the collaboration server from the compatible Zed source tree:
 
 ```sh
 cd /path/to/zed
-nix develop -c cargo run --package=collab -- serve collab
+SECRETSPEC_PROVIDER=file:/run/secrets/zed \
+  secretspec --file /path/to/zed-local-cloud/secretspec.toml \
+  run --profile production --scope collab -- \
+  nix develop -c cargo run --package=collab -- serve collab
 ```
 
 Start the local cloud:
@@ -450,8 +442,9 @@ local cloud processes.
 
 Start `zed-local-cloud serve` with `--config` and the path to one TOML file.
 This file contains the application settings. Systemd credentials contain the
-secrets that the administrator supplies. The SecretSpec state provider contains
-the generated secrets. `RUST_LOG` can override the configured tracing filter.
+secrets that the administrator supplies. The provision command stores generated
+secrets in its explicit state directory. `RUST_LOG` can override the configured
+tracing filter.
 
 | TOML key           | Default                                              | Function                                                  |
 | ------------------ | ---------------------------------------------------- | --------------------------------------------------------- |
@@ -465,11 +458,12 @@ the generated secrets. `RUST_LOG` can override the configured tracing filter.
 | `oidc.admin_value` | `admin`                                              | Set the administrator claim value                         |
 
 Do not put secret values in the configuration TOML file. In production,
-SecretSpec reads `cookie-key` and `internal-api-key` from `/var/lib/zed`.
-It reads `DATABASE_URL` and `OIDC_CLIENT_SECRET` from the systemd credential
-directory. SecretSpec stores the cookie key as base64 text. The application
-removes surrounding white space from the database URL and the application
-keys. It also removes this white space from the OIDC secret.
+systemd mounts `COOKIE_KEY` and `INTERNAL_API_KEY` from `/var/lib/zed`. It also
+mounts `DATABASE_URL` and `OIDC_CLIENT_SECRET` from the configured source files.
+SecretSpec reads these values from the systemd credential directory. SecretSpec
+stores the cookie key as base64 text. The application removes surrounding white
+space from the database URL and the application keys. It also removes this
+white space from the OIDC secret.
 
 ## Database ownership
 

@@ -17,7 +17,7 @@ struct Arguments {
 enum Command {
     Provision {
         #[arg(long, value_name = "PATH")]
-        collab_secret_file: PathBuf,
+        state_directory: PathBuf,
         #[arg(long, value_name = "KEY")]
         livekit_api_key: Option<String>,
     },
@@ -30,15 +30,10 @@ async fn main() -> anyhow::Result<()> {
     let command = arguments.command.unwrap_or(Command::Serve);
     match command {
         Command::Provision {
-            collab_secret_file,
+            state_directory,
             livekit_api_key,
         } => {
-            provision(
-                Config::new(arguments.config.as_deref())?,
-                &collab_secret_file,
-                livekit_api_key.as_deref(),
-            )
-            .await?;
+            provision(&state_directory, livekit_api_key.as_deref()).await?;
             return Ok(());
         }
         Command::Serve => {}

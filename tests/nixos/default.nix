@@ -130,12 +130,16 @@ in {
           ).strip()
           assert user == "zed", f"{unit} runs as {user!r}"
 
+      for unit in ["zed-provision.service", "zed-local-cloud.service"]:
           state_directory = machine.succeed(
               f"systemctl show {unit} --property=StateDirectory --value"
           ).strip()
           assert state_directory == "zed", (
               f"{unit} uses state directory {state_directory!r}"
           )
+      assert machine.succeed(
+          "systemctl show zed-collab.service --property=StateDirectory --value"
+      ).strip() == ""
 
       zed_target_wants = set(machine.succeed(
           "systemctl show zed.target --property=Wants --value"
@@ -176,15 +180,15 @@ in {
           "stat --format='%U:%G %a' /var/lib/zed"
       ).strip() == "zed:zed 700"
       assert machine.succeed(
-          "stat --format='%U:%G %a' /var/lib/zed/internal-api-key"
+          "stat --format='%U:%G %a' /var/lib/zed/INTERNAL_API_KEY"
       ).strip() == "zed:zed 600"
       assert machine.succeed(
-          "stat --format='%U:%G %a %s' /var/lib/zed/cookie-key"
+          "stat --format='%U:%G %a %s' /var/lib/zed/COOKIE_KEY"
       ).strip() == "zed:zed 600 88"
-      key = machine.succeed("cat /var/lib/zed/internal-api-key")
-      cookie_key = machine.succeed("cat /var/lib/zed/cookie-key")
+      key = machine.succeed("cat /var/lib/zed/INTERNAL_API_KEY")
+      cookie_key = machine.succeed("cat /var/lib/zed/COOKIE_KEY")
       cookie_key_hash = machine.succeed(
-          "sha256sum /var/lib/zed/cookie-key"
+          "sha256sum /var/lib/zed/COOKIE_KEY"
       ).split()[0]
       assert len(base64.b64decode(cookie_key, validate=True)) == 64
       assert len(base64.b64decode(key, validate=True)) == 128
@@ -224,40 +228,51 @@ in {
           "cat /run/credentials/zed-local-cloud.service/OIDC_CLIENT_SECRET"
       ) == "test-client-secret"
 
-      collab_environment = tomllib.loads(
-          machine.succeed("cat /run/zed-collab/crates/collab/.env.toml")
+      collab_wrapper_pid = machine.succeed(
+          "systemctl show zed-collab.service --property=MainPID --value"
+      ).strip()
+      collab_command = machine.succeed(
+          f"tr '\0' '\n' </proc/{collab_wrapper_pid}/cmdline"
+      ).splitlines()
+      assert collab_command[0].endswith("/secretspec"), collab_command
+      assert "run" in collab_command, collab_command
+      assert "--scope" in collab_command, collab_command
+      assert "collab" in collab_command, collab_command
+      collab_pid = machine.succeed(
+          f"pgrep --parent {collab_wrapper_pid}"
+      ).strip()
+      collab_environment = dict(
+          line.split("=", 1)
+          for line in machine.succeed(
+              f"tr '\0' '\n' </proc/{collab_pid}/environ"
+          ).splitlines()
+          if "=" in line
       )
       assert collab_environment["ZED_CLOUD_URL"] == "http://127.0.0.1:8787"
       assert collab_environment["ZED_ENVIRONMENT"] == "production"
       assert collab_environment["BLOB_STORE_REGION"] == "test-region"
       assert collab_environment["LIVEKIT_SERVER"] == "https://localhost/livekit"
       assert "ZED_CLIENT_CHECKSUM_SEED" not in collab_environment
-      collab_secret = tomllib.loads(
-          machine.succeed(
-              "cat /run/zed-collab/crates/collab/.env.secret.toml"
-          )
-      )
-      assert collab_secret == {
-          "DATABASE_URL": "postgres://zed@%2Frun%2Fpostgresql/zed",
-          "ZED_CLOUD_INTERNAL_API_KEY": key,
-          "LIVEKIT_KEY": livekit_key,
-          "LIVEKIT_SECRET": livekit_secret,
-      }
+      assert collab_environment["DATABASE_URL"] == "postgres://zed@%2Frun%2Fpostgresql/zed"
+      assert collab_environment["ZED_CLOUD_INTERNAL_API_KEY"] == key
+      assert collab_environment["LIVEKIT_KEY"] == livekit_key
+      assert collab_environment["LIVEKIT_SECRET"] == livekit_secret
+      assert "INTERNAL_API_KEY" not in collab_environment
       assert machine.succeed(
           "cat /run/credentials/livekit.service/livekit-secrets"
       ) == ${builtins.toJSON livekitKeysText}
-      assert "DATABASE_URL" not in collab_environment
+      assert machine.fail("test -e /run/zed-collab/crates/collab/.env.toml")
+      assert machine.fail("test -e /var/lib/zed/collab/.env.secret.toml")
 
       machine.succeed("systemctl restart zed-provision.service")
       assert machine.succeed(
-          "sha256sum /var/lib/zed/cookie-key"
+          "sha256sum /var/lib/zed/COOKIE_KEY"
       ).split()[0] == cookie_key_hash
       assert machine.succeed(
-          "cat /var/lib/zed/internal-api-key"
+          "cat /var/lib/zed/INTERNAL_API_KEY"
       ) == key
-      assert tomllib.loads(
-          machine.succeed("cat /var/lib/zed/collab/.env.secret.toml")
-      )["LIVEKIT_SECRET"] == livekit_secret
+      assert machine.succeed("cat /var/lib/zed/LIVEKIT_KEY") == livekit_key
+      assert machine.succeed("cat /var/lib/zed/LIVEKIT_SECRET") == livekit_secret
 
       migrations = machine.succeed(
           "runuser -u postgres -- psql --dbname=zed --tuples-only --no-align "
