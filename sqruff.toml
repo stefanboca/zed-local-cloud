@@ -1,5 +1,6 @@
 [sqruff]
 dialect = "postgres"
+exclude_rules = ["RF05"]
 rules = "all"
 
 [sqruff.indentation]

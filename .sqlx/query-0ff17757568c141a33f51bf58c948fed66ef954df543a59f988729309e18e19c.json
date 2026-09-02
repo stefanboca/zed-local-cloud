@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    profiles.user_id,\n    profiles.github_login AS \"username!\",\n    profiles.github_login,\n    profiles.avatar_url,\n    profiles.name,\n    users.admin,\n    users.connected_once,\n    'local-' || profiles.user_id::text AS \"stable_id!\"\nFROM unnest($1::integer []) WITH ORDINALITY AS requested (user_id, position)\n    INNER JOIN\n        local_user_profiles AS profiles\n        ON requested.user_id = profiles.user_id\n    INNER JOIN users ON profiles.user_id = users.id\nORDER BY requested.position\n",
+  "query": "SELECT\n    profiles.user_id,\n    profiles.github_login AS \"username!\",\n    profiles.github_login,\n    profiles.avatar_url,\n    profiles.name,\n    users.admin,\n    users.connected_once,\n    'local-' || profiles.user_id::text AS \"stable_id!\"\nFROM unnest($1::integer []) WITH ORDINALITY AS requested (user_id, ordinal)\n    INNER JOIN\n        local_user_profiles AS profiles\n        ON requested.user_id = profiles.user_id\n    INNER JOIN users ON profiles.user_id = users.id\nORDER BY requested.ordinal\n",
   "describe": {
     "columns": [
       {
@@ -103,5 +103,5 @@
       null
     ]
   },
-  "hash": "b03a6695becc160994b49c0999a100e86a6930cee513d51183edc78aefdb5f0f"
+  "hash": "0ff17757568c141a33f51bf58c948fed66ef954df543a59f988729309e18e19c"
 }
