@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE local_user_profiles\nSET\n    avatar_url = $2,\n    name = $3,\n    email_address = $4,\n    upstream_is_staff = false,\n    updated_at = now()\nWHERE user_id = $1\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bff2ca43c48be05002306027efe4a2c9b34da27cab26acee7526f37e27ee65a3"
+}

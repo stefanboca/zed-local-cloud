@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    profiles.user_id,\n    'local-' || profiles.user_id::text AS \"stable_id!\",\n    profiles.github_login AS \"username!\",\n    profiles.github_login,\n    profiles.avatar_url,\n    profiles.name,\n    users.admin,\n    users.connected_once\nFROM local_user_profiles profiles\nJOIN users ON users.id = profiles.user_id\nWHERE lower(profiles.github_login) = lower($1)\n",
+  "query": "SELECT\n    profiles.user_id,\n    profiles.github_login AS \"username!\",\n    profiles.github_login,\n    profiles.avatar_url,\n    profiles.name,\n    users.admin,\n    users.connected_once,\n    'local-' || profiles.user_id::text AS \"stable_id!\"\nFROM local_user_profiles AS profiles\n    INNER JOIN users ON profiles.user_id = users.id\nWHERE\n    strpos(lower(profiles.github_login), lower($1)) > 0\n    OR strpos(lower(coalesce(profiles.name, '')), lower($1)) > 0\nORDER BY\n    lower(profiles.github_login) = lower($1) DESC,\n    left(lower(profiles.github_login), length($1)) = lower($1) DESC,\n    length(profiles.github_login),\n    lower(profiles.github_login)\nLIMIT $2\n",
   "describe": {
     "columns": [
       {
@@ -16,12 +16,6 @@
       },
       {
         "ordinal": 1,
-        "name": "stable_id!",
-        "type_info": "Text",
-        "origin": "Expression"
-      },
-      {
-        "ordinal": 2,
         "name": "username!",
         "type_info": "Text",
         "origin": {
@@ -32,7 +26,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 2,
         "name": "github_login",
         "type_info": "Text",
         "origin": {
@@ -43,7 +37,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 3,
         "name": "avatar_url",
         "type_info": "Text",
         "origin": {
@@ -54,7 +48,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 4,
         "name": "name",
         "type_info": "Text",
         "origin": {
@@ -65,7 +59,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "admin",
         "type_info": "Bool",
         "origin": {
@@ -76,7 +70,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "connected_once",
         "type_info": "Bool",
         "origin": {
@@ -85,23 +79,30 @@
             "name": "connected_once"
           }
         }
+      },
+      {
+        "ordinal": 7,
+        "name": "stable_id!",
+        "type_info": "Text",
+        "origin": "Expression"
       }
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Text",
+        "Int8"
       ]
     },
     "nullable": [
       false,
-      null,
       false,
       false,
       false,
       true,
       false,
-      false
+      false,
+      null
     ]
   },
-  "hash": "bbc8c2be0303f7f4be1922846b12165db680e245f11dd3f12c7096d5c39bc44b"
+  "hash": "ed51cb9d4d97d10f2ee5864fe48376b790b739e60cb8f534ae200a4566d53f73"
 }

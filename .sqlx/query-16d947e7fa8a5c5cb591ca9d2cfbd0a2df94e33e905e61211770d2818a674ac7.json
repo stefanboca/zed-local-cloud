@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT EXISTS(\n    SELECT 1\n    FROM local_user_profiles\n    WHERE lower(github_login) = lower($1)\n) AS \"exists!\"\n",
+  "query": "SELECT EXISTS(\n    SELECT 1\n    FROM local_user_profiles\n    WHERE LOWER(github_login) = LOWER($1)\n) AS \"exists!\"\n",
   "describe": {
     "columns": [
       {
@@ -19,5 +19,5 @@
       null
     ]
   },
-  "hash": "5a80c7663a10ac1a075e07ef29dc1205e24075926cc9328c1d049be3b3acc1cf"
+  "hash": "16d947e7fa8a5c5cb591ca9d2cfbd0a2df94e33e905e61211770d2818a674ac7"
 }
