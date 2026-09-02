@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH\n    existing_identity AS MATERIALIZED (\n        SELECT user_id\n        FROM local_oidc_identities\n        WHERE issuer = $1 AND subject = $2\n    ),\n\n    synced_account AS (\n        UPDATE \"users\" AS u\n        SET\n            \"admin\" = $3,\n            email_address = $4,\n            \"name\" = $5\n        FROM existing_identity\n        WHERE u.id = existing_identity.user_id\n    ),\n\n    updated_profile AS (\n        UPDATE local_user_profiles\n        SET\n            avatar_url = $6,\n            \"name\" = $5,\n            email_address = $4,\n            upstream_is_staff = false,\n            updated_at = now()\n        FROM existing_identity\n        WHERE local_user_profiles.user_id = existing_identity.user_id\n    ),\n\n    updated_identity AS (\n        UPDATE local_oidc_identities\n        SET updated_at = now()\n        FROM existing_identity\n        WHERE\n            local_oidc_identities.issuer = $1\n            AND local_oidc_identities.subject = $2\n    ),\n\n    inserted_token AS (\n        INSERT INTO local_user_tokens (user_id, access_token_hash)\n        SELECT\n            existing_identity.user_id,\n            $7 AS access_token_hash\n        FROM existing_identity\n    )\n\nSELECT existing_identity.user_id\nFROM existing_identity\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "local_oidc_identities",
+            "name": "user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Bool",
+        "Varchar",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "983727cc1c6b9dd975d64759e924ba554f502fec7b2d23cbe74adffb7a639436"
+}

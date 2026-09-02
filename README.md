@@ -89,6 +89,9 @@ The service reads claims from the verified ID token. If the provider has a
 UserInfo endpoint, the service also reads claims from that endpoint. A
 UserInfo value has priority over the same ID-token value.
 
+For a new user, the service normalizes `preferred_username` and falls back to
+the local part of `email`. Login fails if neither produces a usable username.
+
 The `picture` claim is optional. If it is not present, `avatar_url` is an
 empty string.
 

@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH\n    inserted_account AS (\n        INSERT INTO \"users\" (\"admin\", email_address, connected_once, \"name\")\n        VALUES ($1, $2, false, $3)\n        RETURNING id, metrics_id\n    ),\n\n    inserted_profile AS (\n        INSERT INTO local_user_profiles (\n            user_id,\n            github_login,\n            avatar_url,\n            \"name\",\n            email_address,\n            metrics_id,\n            upstream_is_staff\n        )\n        SELECT\n            inserted_account.id AS user_id,\n            CASE\n                WHEN\n                    EXISTS (\n                        SELECT 1\n                        FROM local_user_profiles AS profiles\n                        WHERE lower(profiles.github_login) = lower($4)\n                    )\n                    THEN $4 || '-' || inserted_account.id::text\n                ELSE $4\n            END AS github_login,\n            $5 AS avatar_url,\n            $3 AS \"name\",\n            $2 AS email_address,\n            inserted_account.metrics_id,\n            false AS upstream_is_staff\n        FROM inserted_account\n        RETURNING user_id\n    ),\n\n    inserted_identity AS (\n        INSERT INTO local_oidc_identities (issuer, subject, user_id)\n        SELECT\n            $6 AS issuer,\n            $7 AS subject,\n            inserted_profile.user_id\n        FROM inserted_profile\n        RETURNING user_id\n    ),\n\n    inserted_token AS (\n        INSERT INTO local_user_tokens (user_id, access_token_hash)\n        SELECT\n            inserted_identity.user_id,\n            $8 AS access_token_hash\n        FROM inserted_identity\n        RETURNING user_id\n    )\n\nSELECT inserted_token.user_id\nFROM inserted_token\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "local_user_tokens",
+            "name": "user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bool",
+        "Varchar",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "004d1ae8e9d41a3ffc84278c8d72971fe0450854f0a4d8718aeb780f67a8eddf"
+}

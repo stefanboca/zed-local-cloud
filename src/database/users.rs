@@ -53,7 +53,7 @@ impl Database {
         profile: &OidcProfile,
         access_token: &str,
         admin: bool,
-    ) -> sqlx::Result<i32> {
+    ) -> anyhow::Result<i32> {
         let mut transaction = self.0.begin().await?;
 
         let identity_lock = oidc_identity_lock_key(&profile.issuer, &profile.subject);
@@ -61,109 +61,49 @@ impl Database {
             .execute(&mut *transaction)
             .await?;
 
+        let access_token_hash = hash_access_token(access_token);
         let existing_user_id = sqlx::query_file_scalar!(
-            "queries/user/find_oidc_identity.sql",
+            "queries/user/sync_existing_oidc_user.sql",
             &profile.issuer,
             &profile.subject,
+            admin,
+            profile.email_address.as_deref(),
+            profile.name.as_deref(),
+            &profile.avatar_url,
+            &access_token_hash,
         )
         .fetch_optional(&mut *transaction)
         .await?;
 
         let user_id = if let Some(user_id) = existing_user_id {
-            sqlx::query_file!(
-                "queries/user/update_user.sql",
-                user_id,
-                admin,
-                profile.email_address.as_deref(),
-                profile.name.as_deref(),
-            )
-            .execute(&mut *transaction)
-            .await?;
-
-            sqlx::query_file!(
-                "queries/user/update_profile.sql",
-                user_id,
-                &profile.avatar_url,
-                profile.name.as_deref(),
-                profile.email_address.as_deref(),
-            )
-            .execute(&mut *transaction)
-            .await?;
-
-            sqlx::query_file!(
-                "queries/user/touch_oidc_identity.sql",
-                &profile.issuer,
-                &profile.subject,
-            )
-            .execute(&mut *transaction)
-            .await?;
             user_id
         } else {
-            let inserted = sqlx::query_file!(
-                "queries/user/insert_user.sql",
-                admin,
+            let username = oidc_username(
+                profile.preferred_username.as_deref(),
                 profile.email_address.as_deref(),
-                profile.name.as_deref(),
             )
-            .fetch_one(&mut *transaction)
-            .await?;
-            let (user_id, metrics_id) = (inserted.id, inserted.metrics_id);
-
-            let username = normalized_username(
-                profile
-                    .preferred_username
-                    .as_deref()
-                    .or_else(|| {
-                        profile
-                            .email_address
-                            .as_deref()
-                            .and_then(|email| email.split('@').next())
-                    })
-                    .unwrap_or("user"),
-            );
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "the OIDC profile has no usable preferred_username or email local part"
+                )
+            })?;
             sqlx::query_file!("queries/user/lock_username.sql", &username)
                 .execute(&mut *transaction)
                 .await?;
-            let username_taken =
-                sqlx::query_file_scalar!("queries/user/username_exists.sql", &username)
-                    .fetch_one(&mut *transaction)
-                    .await?;
-            let username = if username_taken {
-                format!("{username}-{user_id}")
-            } else {
-                username
-            };
-
-            sqlx::query_file!(
-                "queries/user/insert_profile.sql",
-                user_id,
-                username,
-                &profile.avatar_url,
-                profile.name.as_deref(),
+            sqlx::query_file_scalar!(
+                "queries/user/insert_oidc_user.sql",
+                admin,
                 profile.email_address.as_deref(),
-                metrics_id,
-            )
-            .execute(&mut *transaction)
-            .await?;
-
-            sqlx::query_file!(
-                "queries/user/insert_oidc_identity.sql",
+                profile.name.as_deref(),
+                &username,
+                &profile.avatar_url,
                 &profile.issuer,
                 &profile.subject,
-                user_id,
+                &access_token_hash,
             )
-            .execute(&mut *transaction)
-            .await?;
-            user_id
+            .fetch_one(&mut *transaction)
+            .await?
         };
-
-        sqlx::query_file!(
-            "queries/user/insert_token.sql",
-            user_id,
-            hash_access_token(access_token),
-        )
-        .execute(&mut *transaction)
-        .await?;
 
         transaction.commit().await?;
         Ok(user_id)
@@ -261,23 +201,25 @@ fn oidc_identity_lock_key(issuer: &str, subject: &str) -> String {
 }
 
 fn normalized_username(value: &str) -> String {
-    let mut username = String::with_capacity(value.len().min(48));
+    let mut username = String::with_capacity(value.len());
     for character in value.trim().chars() {
-        if username.len() >= 48 {
-            break;
-        }
         if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
             username.push(character);
         } else if !username.ends_with('-') {
             username.push('-');
         }
     }
-    let username = username.trim_matches(['-', '.']);
-    if username.is_empty() {
-        "user".to_owned()
-    } else {
-        username.to_owned()
-    }
+    username.trim_matches(['-', '.']).to_owned()
+}
+
+fn oidc_username(preferred_username: Option<&str>, email_address: Option<&str>) -> Option<String> {
+    let email_local_part =
+        email_address.and_then(|email| email.split_once('@').map(|parts| parts.0));
+    [preferred_username, email_local_part]
+        .into_iter()
+        .flatten()
+        .map(normalized_username)
+        .find(|username| !username.is_empty())
 }
 
 #[cfg(test)]
@@ -294,7 +236,17 @@ mod tests {
     #[test]
     fn normalizes_oidc_usernames_for_zed() {
         assert_eq!(normalized_username(" Ada Lovelace "), "Ada-Lovelace");
-        assert_eq!(normalized_username("!!!"), "user");
+        assert_eq!(normalized_username("!!!"), "");
+        assert_eq!(normalized_username(&"a".repeat(64)), "a".repeat(64));
+    }
+
+    #[test]
+    fn selects_a_usable_oidc_username() {
+        assert_eq!(
+            oidc_username(Some("!!!"), Some("Ada.Lovelace@example.com")).as_deref(),
+            Some("Ada.Lovelace")
+        );
+        assert_eq!(oidc_username(Some(""), None), None);
     }
 
     #[test]
