@@ -20,6 +20,7 @@ in
         ../../.sqlx
         ../../migrations
         ../../queries
+        ../../secretspec.toml
       ];
     };
 
@@ -49,6 +50,7 @@ in
       install -Dm755 target/release/zed-local-cloud $out/bin/zed-local-cloud
       cp -r target/release/assets $out/bin/assets
       install -Dm644 assets/zed.svg $out/share/zed-local-cloud/zed.svg
+      install -Dm644 secretspec.toml $out/share/zed-local-cloud/secretspec.toml
       runHook postInstall
     '';
 

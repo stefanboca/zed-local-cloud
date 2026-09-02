@@ -21,6 +21,10 @@ impl Database {
             .run(&pool)
             .await
             .context("failed to run database migrations")?;
+        sqlx::query_file!("queries/database/update_pg_trgm.sql")
+            .execute(&pool)
+            .await
+            .context("failed to update pg_trgm")?;
         Ok(Self(pool))
     }
 }

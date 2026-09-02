@@ -28,6 +28,9 @@ uuid = "1.26.0"
 
 # add the native roots feature to reqwest pulled in by openidconnect
 reqwest = { version = "*", default-features = false, features = ["rustls-tls-native-roots"] }
+secretspec = { version = "0.20.0", default-features = false }
+secretspec-derive = "0.20.0"
+clap = { version = "4.6.6", features = ["derive"] }
 
 [build-dependencies]
 topcoat = { version = "0.6.2", default-features = false, features = ["tailwind"] }

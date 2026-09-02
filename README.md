@@ -111,7 +111,6 @@ The flake exports these items:
 
 - The `zed-local-cloud` package for the local cloud
 - The `zed-collab` package for the collaboration server
-- The `zed-migrations` package for the database migrations
 - The default NixOS module
 - A package overlay
 
@@ -164,7 +163,7 @@ package directly under `services.livekit`. Set
 `services.zed-local-cloud.livekit.enable = false` to disable the whole
 integration.
 
-On first start, `zed-credentials` runs `livekit-server generate-keys`. It
+On first start, `zed-provision` runs `livekit-server generate-keys`. It
 stores the key and secret separately in `/var/lib/zed/livekit-api-key` and
 `/var/lib/zed/livekit-api-secret` for collab. It also writes the pair to
 `/var/lib/zed/livekit-keys` because that is the native `key: secret` format
@@ -173,10 +172,11 @@ expected by the upstream LiveKit module. Later runs retain the same pair.
 To manage this credential yourself, set `services.livekit.keyFile` to a
 runtime secret path containing one `key: secret` pair. During setup, the
 integration splits that pair into the two private collab credential files.
-LiveKit and collab receive their respective files through systemd credentials;
-nothing is copied into the Nix store.
+LiveKit receives its pair through a systemd credential. Provisioning includes
+the split values in collab's private TOML; nothing is copied into the Nix
+store.
 
-Systemd loads `clientSecretFile` as the `oidc-client-secret` credential. The
+Systemd loads `clientSecretFile` as the `OIDC_CLIENT_SECRET` credential. The
 local cloud reads the raw secret from its private credential directory. The
 TOML configuration does not contain the secret or its path. The service uses
 a confidential OIDC client and requires this secret.
@@ -186,25 +186,30 @@ The module creates a local PostgreSQL database by default. It creates the
 authentication.
 
 Set `services.zed-local-cloud.database.createLocally = false` for an external
-database. Then set `services.zed-local-cloud.database.url` to the external
-database URL.
+database. Then set `services.zed-local-cloud.database.urlFile` to a runtime
+secret file containing the external database URL.
 
-The `zed-credentials` service creates a 64-byte cookie key and a 128-byte
-internal API key on its first run. It stores them in `/var/lib/zed/cookie-key`
-and `/var/lib/zed/internal-api-key`. Later runs keep the same non-empty files.
-Their file mode is `0600`. The module loads them as the `cookie-key` and
-`internal-api-key` systemd credentials. The generated TOML configuration does
-not contain either key or path.
+The `zed-provision` service uses SecretSpec to create a 64-byte cookie key
+and a 128-byte internal API key on its first run. It stores their base64 text
+in `/var/lib/zed/cookie-key` and `/var/lib/zed/internal-api-key`. Later runs
+reuse the same values, and both files have mode `0600`. Local cloud reads these
+files through the SecretSpec Rust API. On every activation, provisioning also
+runs the embedded SQLx migrations and atomically renders collab's persistent
+secret TOML with the database URL, internal API key, and optional LiveKit pair.
 
-The cookie, OIDC, and internal API secrets each have a separate raw-value file.
-Do not use TOML syntax in them. An externally managed LiveKit key file instead
-uses LiveKit's `key: secret` format described above.
+The provisioning service is independent of local cloud, so disabling
+`localCloud.enable` does not prevent secrets or migrations from being prepared.
 
-The local cloud applies all migrations in this project before it starts its
-HTTP listener. Systemd starts the collaboration server after the local cloud
-is ready. The `zed.target` target contains the credentials service, the local
-cloud service, and the collaboration service. It does not contain PostgreSQL
-or LiveKit.
+The OIDC client secret remains a systemd credential supplied by the
+administrator. An externally managed LiveKit key file uses LiveKit's
+`key: secret` format described above; LiveKit provisioning is not yet managed
+by SecretSpec.
+
+The provisioning service applies all migrations before either application
+starts. Systemd starts the collaboration server after the local cloud is ready.
+The `zed.target` target contains the credentials service, the local cloud
+service, and the collaboration service. It does not contain PostgreSQL or
+LiveKit.
 
 ## Authelia example
 
@@ -299,7 +304,7 @@ paths for your installation.
 
 ```sh
 umask 077
-openssl rand -out /var/lib/zed/cookie-key 64
+openssl rand -base64 64 | tr -d '\n' > /var/lib/zed/cookie-key
 openssl rand -base64 128 | tr -d '\n' > /var/lib/zed/internal-api-key
 ```
 
@@ -311,7 +316,6 @@ Create `zed-local-cloud.toml`:
 ```toml
 base_url = "https://zed.example.com"
 bind_address = "127.0.0.1:8787"
-database_url = "postgres://postgres@localhost/zed"
 log_level = "zed_local_cloud=info,sqlx=warn"
 
 [oidc]
@@ -325,10 +329,11 @@ admin_value = "zed-admin"
 The local cloud constructs the OIDC redirect URL from `base_url`. It sets the
 path to `/auth/oidc/callback` and keeps the configured scheme and authority.
 
-Put files named `cookie-key`, `internal-api-key`, and `oidc-client-secret` in
-one private directory. The cookie key must contain at least 64 bytes. Set
-`CREDENTIALS_DIRECTORY` to that directory when you run the service outside
-systemd.
+Put files named `cookie-key`, `internal-api-key`, `DATABASE_URL`, and
+`OIDC_CLIENT_SECRET` in one private directory. The cookie key must decode from
+base64 to at least 64 bytes. When running outside systemd, set
+`SECRETSPEC_PROVIDER` to a `file:` URI for that directory; this intentionally
+overrides both production providers.
 
 Start the collaboration server from the compatible Zed source tree:
 
@@ -341,8 +346,8 @@ Start the local cloud:
 
 ```sh
 cd /path/to/zed-local-cloud
-CREDENTIALS_DIRECTORY=/run/secrets \
-  nix develop -c cargo run -- --config ./zed-local-cloud.toml
+SECRETSPEC_PROVIDER=file:/run/secrets \
+  nix develop -c cargo run -- serve --config ./zed-local-cloud.toml
 ```
 
 The local cloud performs OIDC discovery during startup. Startup fails if the
@@ -409,15 +414,16 @@ Users appear in local search results only after their first local OIDC login.
 
 ## Configuration
 
-Start `zed-local-cloud` with `--config` and the path to one TOML file. In
-production, application settings come from this file and secrets come from
-systemd credentials. `RUST_LOG` can override the configured tracing filter.
+Start `zed-local-cloud serve` with `--config` and the path to one TOML file. In
+production, application settings come from this file, administrator-supplied
+secrets come from systemd credentials, and generated secrets come from the
+SecretSpec state provider. `RUST_LOG` can override the configured tracing
+filter.
 
 | TOML key           | Default                          | Function                                                  |
 | ------------------ | -------------------------------- | --------------------------------------------------------- |
 | `base_url`         | Required                         | Set the public local cloud URL used for the OIDC callback |
 | `bind_address`     | `127.0.0.1:8787`                 | Set the local cloud TCP listen address                    |
-| `database_url`     | Local `zed` socket URL           | Set the shared PostgreSQL URL                             |
 | `log_level`        | `zed_local_cloud=info,sqlx=warn` | Set the tracing filter                                    |
 | `oidc.issuer_url`  | Required                         | Set the OIDC issuer URL                                   |
 | `oidc.client_id`   | Required                         | Set the OIDC client identifier                            |
@@ -425,10 +431,11 @@ systemd credentials. `RUST_LOG` can override the configured tracing filter.
 | `oidc.admin_claim` | `groups`                         | Set the administrator claim path                          |
 | `oidc.admin_value` | `admin`                          | Set the administrator claim value                         |
 
-Do not put secret values in the TOML file. The service requires the systemd
-credentials `cookie-key`, `internal-api-key`, and `oidc-client-secret`. The
-cookie key is binary and is read unchanged. Leading and trailing white space is
-removed from the two text credentials.
+Do not put secret values in the configuration TOML file. In production,
+SecretSpec reads `cookie-key` and `internal-api-key` from `/var/lib/zed` and
+reads `DATABASE_URL` and `OIDC_CLIENT_SECRET` from the service's systemd
+credential directory. The cookie key is stored as base64; surrounding
+whitespace is removed from all values while loading.
 
 ## Database ownership
 
@@ -452,7 +459,7 @@ version is `20251208000000`. Its SQLx SHA-384 checksum is
 This checksum is the checksum in databases that this project created before
 the Zed 1.17.2 update.
 
-The `zed-migrations` package contains the fixed schema and all incremental
+The local-cloud executable embeds the fixed schema and all incremental
 migrations. The collab package does not refer to these files. A migration
 change does not rebuild the collab package.
 
@@ -489,9 +496,9 @@ PostgreSQL to `127.0.0.1:5432`, OIDC to `http://localhost:9091`, and the
 unified Zed endpoint to `http://localhost:8787`. The tracked `.env` points
 SQLx at this database.
 
-The VM collaboration service applies all migrations in this project before it
-starts. The host-side local cloud finds the same migration ledger and does not
-apply the migrations a second time.
+The VM provisioning service applies all migrations in this project before
+collab starts. The host-side local cloud finds the same migration ledger and
+does not apply the migrations a second time.
 
 The Nix development shell includes the version-matched Topcoat CLI and the
 Tailwind CSS CLI. In a second terminal, start the local cloud and UI:
@@ -499,6 +506,10 @@ Tailwind CSS CLI. In a second terminal, start the local cloud and UI:
 ```sh
 nix develop -c topcoat dev
 ```
+
+Topcoat invokes the binary without arguments, which defaults to `serve` in the
+detected development configuration. Production invocations use
+`zed-local-cloud serve --config <path>` explicitly.
 
 Open `http://localhost:8787/native_app_signin` with the query parameters sent
 by Zed, or set `ZED_SERVER_URL=http://localhost:8787` in a development Zed

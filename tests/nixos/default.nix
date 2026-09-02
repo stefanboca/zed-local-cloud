@@ -7,7 +7,6 @@
     oidc-provider-mock
     zed-collab
     zed-local-cloud
-    zed-migrations
     ;
 
   websocketNotificationClient =
@@ -52,7 +51,6 @@ in {
       services.zed-local-cloud = {
         enable = true;
         package = zed-local-cloud;
-        migrations.package = zed-migrations;
         collab.package = zed-collab;
         virtualHost = "localhost";
         upstreamApiUrl = "http://127.0.0.1:18081";
@@ -91,10 +89,9 @@ in {
 
       for unit in [
           "postgresql.target",
-          "zed-postgresql-extensions.service",
           "fake-extensions.service",
           "oidc-provider-mock.service",
-          "zed-credentials.service",
+          "zed-provision.service",
           "zed-local-cloud.service",
           "zed-collab.service",
           "zed.target",
@@ -113,7 +110,7 @@ in {
       assert failed_units.strip() == "", failed_units
 
       for unit in [
-          "zed-credentials.service",
+          "zed-provision.service",
           "zed-local-cloud.service",
           "zed-collab.service",
       ]:
@@ -133,22 +130,22 @@ in {
           "systemctl show zed.target --property=Wants --value"
       ).split())
       assert zed_target_wants == {
-          "zed-credentials.service",
+          "zed-provision.service",
           "zed-local-cloud.service",
           "zed-collab.service",
       }, zed_target_wants
       assert machine.succeed(
           "systemctl show zed-local-cloud.service --property=Type --value"
       ).strip() == "notify"
-      for unit in ["zed-local-cloud.service", "zed-collab.service"]:
+      for unit in [
+          "zed-provision.service",
+          "zed-local-cloud.service",
+          "zed-collab.service",
+      ]:
           requires = set(machine.succeed(
               f"systemctl show {unit} --property=Requires --value"
           ).split())
           assert "postgresql.target" in requires, (unit, requires)
-          assert "zed-postgresql-extensions.service" in requires, (
-              unit,
-              requires,
-          )
       collab_after = set(machine.succeed(
           "systemctl show zed-collab.service --property=After --value"
       ).split())
@@ -172,7 +169,7 @@ in {
       ).strip() == "zed:zed 600"
       assert machine.succeed(
           "stat --format='%U:%G %a %s' /var/lib/zed/cookie-key"
-      ).strip() == "zed:zed 600 64"
+      ).strip() == "zed:zed 600 88"
       assert machine.succeed(
           "stat --format='%U:%G %a' /var/lib/zed/livekit-keys"
       ).strip() == "zed:zed 600"
@@ -182,9 +179,11 @@ in {
               f"/var/lib/zed/{livekit_credential}"
           ).strip() == "zed:zed 600"
       key = machine.succeed("cat /var/lib/zed/internal-api-key")
+      cookie_key = machine.succeed("cat /var/lib/zed/cookie-key")
       cookie_key_hash = machine.succeed(
           "sha256sum /var/lib/zed/cookie-key"
       ).split()[0]
+      assert len(base64.b64decode(cookie_key, validate=True)) == 64
       assert len(base64.b64decode(key, validate=True)) == 128
       livekit_key = machine.succeed("cat /var/lib/zed/livekit-api-key")
       livekit_secret = machine.succeed("cat /var/lib/zed/livekit-api-secret")
@@ -212,45 +211,35 @@ in {
       auth_command = machine.succeed(
           f"tr '\\0' '\\n' </proc/{auth_pid}/cmdline"
       ).splitlines()
+      assert auth_command[-3] == "serve", auth_command
       assert auth_command[-2] == "--config", auth_command
       auth_config_text = machine.succeed(f"cat {auth_command[-1]}")
       auth_config = tomllib.loads(auth_config_text)
       assert auth_config["base_url"] == "https://localhost"
       assert auth_config["bind_address"] == "127.0.0.1:8787"
-      assert auth_config["database_url"] == (
-          "postgres://zed@%2Frun%2Fpostgresql/zed"
-      )
+      assert "database_url" not in auth_config
       assert "internal_api_key_file" not in auth_config
       assert "client_secret_file" not in auth_config["oidc"]
       assert "redirect_url" not in auth_config["oidc"]
       assert "test-client-secret" not in auth_config_text
       assert machine.succeed(
-          "cmp /var/lib/zed/cookie-key "
-          "/run/credentials/zed-local-cloud.service/cookie-key"
-      ) == ""
-      assert machine.succeed(
-          "cat /run/credentials/zed-local-cloud.service/oidc-client-secret"
+          "cat /run/credentials/zed-local-cloud.service/OIDC_CLIENT_SECRET"
       ) == "test-client-secret"
-      assert machine.succeed(
-          "cat /run/credentials/zed-local-cloud.service/internal-api-key"
-      ) == key
 
       collab_environment = tomllib.loads(
           machine.succeed("cat /run/zed-collab/crates/collab/.env.toml")
       )
-      assert (
-          collab_environment["DATABASE_URL"]
-          == "postgres://zed@%2Frun%2Fpostgresql/zed"
-      )
       assert collab_environment["ZED_CLOUD_URL"] == "http://127.0.0.1:8787"
       assert collab_environment["ZED_ENVIRONMENT"] == "production"
       assert collab_environment["LIVEKIT_SERVER"] == "https://localhost/livekit"
+      assert "ZED_CLIENT_CHECKSUM_SEED" not in collab_environment
       collab_secret = tomllib.loads(
           machine.succeed(
               "cat /run/zed-collab/crates/collab/.env.secret.toml"
           )
       )
       assert collab_secret == {
+          "DATABASE_URL": "postgres://zed@%2Frun%2Fpostgresql/zed",
           "ZED_CLOUD_INTERNAL_API_KEY": key,
           "LIVEKIT_KEY": livekit_key,
           "LIVEKIT_SECRET": livekit_secret,
@@ -258,14 +247,9 @@ in {
       assert machine.succeed(
           "cat /run/credentials/livekit.service/livekit-secrets"
       ) == f"{livekit_key}: {livekit_secret}\n"
-      assert machine.succeed(
-          "cat /run/credentials/zed-collab.service/livekit-api-key"
-      ) == livekit_key
-      assert machine.succeed(
-          "cat /run/credentials/zed-collab.service/livekit-api-secret"
-      ) == livekit_secret
+      assert "DATABASE_URL" not in collab_environment
 
-      machine.succeed("systemctl restart zed-credentials.service")
+      machine.succeed("systemctl restart zed-provision.service")
       assert machine.succeed(
           "sha256sum /var/lib/zed/cookie-key"
       ).split()[0] == cookie_key_hash

@@ -1,21 +1,19 @@
-use std::{
-    fs,
-    net::SocketAddr,
-    path::{Path, PathBuf},
-};
+use std::{env, fs, net::SocketAddr, path::Path};
 
 use anyhow::Context as _;
 use serde::Deserialize;
 use url::Url;
 
+secretspec_derive::declare_secrets!("secretspec.toml");
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(skip, default = "production_profile")]
+    profile: Profile,
     #[serde(default = "default_bind_address")]
     pub bind_address: SocketAddr,
     pub base_url: Url,
-    #[serde(default = "default_database_url")]
-    pub database_url: String,
     #[serde(default = "default_log_level")]
     pub log_level: String,
     pub oidc: OidcConfig,
@@ -34,26 +32,34 @@ pub struct OidcConfig {
     pub admin_value: String,
 }
 
-pub struct Secrets {
-    pub(crate) cookie_key: Vec<u8>,
-    pub(crate) internal_api_key: String,
-    pub(crate) oidc_client_secret: String,
-}
-
 pub struct InternalApiKey(pub(crate) String);
 
 impl Config {
-    pub fn from_file(path: &Path) -> anyhow::Result<Self> {
+    pub fn new(path: Option<&Path>) -> anyhow::Result<Self> {
+        if cfg!(debug_assertions) && env::var_os("TOPCOAT_DEV_URL").is_some() {
+            return Ok(Self::development());
+        }
+
+        let path = path.context("--config is required outside development mode")?;
         let contents = fs::read_to_string(path)
             .with_context(|| format!("reading configuration {}", path.display()))?;
         toml::from_str(&contents).context("decoding TOML configuration")
     }
 
-    pub fn dev() -> Self {
+    pub fn secrets(&self) -> anyhow::Result<SecretSpec> {
+        Ok(SecretSpec::builder()
+            .with_profile(self.profile)
+            .with_reason("start zed-local-cloud")
+            .load()
+            .context("resolving local-cloud secrets")?
+            .secrets)
+    }
+
+    fn development() -> Self {
         Self {
+            profile: Profile::Development,
             bind_address: "127.0.0.1:3000".parse().unwrap(),
             base_url: Url::parse("http://localhost:8787").unwrap(),
-            database_url: default_database_url_dev(),
             log_level: "zed_local_cloud=debug,tower_http=info,sqlx=warn".to_owned(),
             oidc: OidcConfig {
                 issuer_url: "http://localhost:9091".to_owned(),
@@ -66,47 +72,12 @@ impl Config {
     }
 }
 
-impl Secrets {
-    pub fn from_systemd() -> anyhow::Result<Self> {
-        Ok(Self {
-            cookie_key: read_credential_bytes("cookie-key")?,
-            internal_api_key: read_credential("internal-api-key")?,
-            oidc_client_secret: read_credential("oidc-client-secret")?,
-        })
-    }
-
-    pub fn dev() -> Self {
-        Self {
-            cookie_key: vec![0; 64],
-            internal_api_key: "development-development-development".to_owned(),
-            oidc_client_secret: "development".to_owned(),
-        }
-    }
-}
-
-fn read_credential(name: &str) -> anyhow::Result<String> {
-    let value = String::from_utf8(read_credential_bytes(name)?)
-        .with_context(|| format!("credential {name} is not valid UTF-8"))?;
-    Ok(value.trim().to_owned())
-}
-
-fn read_credential_bytes(name: &str) -> anyhow::Result<Vec<u8>> {
-    let directory =
-        std::env::var("CREDENTIALS_DIRECTORY").context("CREDENTIALS_DIRECTORY is required")?;
-    fs::read(PathBuf::from(directory).join(name))
-        .with_context(|| format!("reading credential {name}"))
+fn production_profile() -> Profile {
+    Profile::Production
 }
 
 fn default_bind_address() -> SocketAddr {
     "127.0.0.1:8787".parse().unwrap()
-}
-
-fn default_database_url() -> String {
-    "postgres://zed@%2Frun%2Fpostgresql/zed".to_owned()
-}
-
-fn default_database_url_dev() -> String {
-    "postgres://development:development@127.0.0.1:5432/zed".to_owned()
 }
 
 fn default_log_level() -> String {

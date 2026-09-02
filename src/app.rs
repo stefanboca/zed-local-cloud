@@ -6,6 +6,7 @@ mod native_app_signin;
 mod native_app_signin_succeeded;
 
 use anyhow::Context as _;
+use base64::{Engine as _, prelude::BASE64_STANDARD};
 use topcoat::{
     Result,
     asset::{AssetBundle, RouterBuilderAssetExt},
@@ -24,7 +25,7 @@ use tracing::Level;
 
 use crate::{
     assets::ZED_LOGO,
-    config::{Config, InternalApiKey, Secrets},
+    config::{Config, InternalApiKey},
     database::Database,
     oidc::Oidc,
     user_updates::UserUpdates,
@@ -32,14 +33,21 @@ use crate::{
 
 topcoat::router::not_found!();
 
-pub async fn serve(config: Config, secrets: Secrets) -> anyhow::Result<()> {
+pub async fn serve(config: Config) -> anyhow::Result<()> {
+    let secrets = config.secrets()?;
+
     let bind_address = config.bind_address;
-    let database = Database::new(&config.database_url).await?;
-    let user_updates = UserUpdates::connect(&config.database_url).await?;
-    let oidc = Oidc::discover(&config, secrets.oidc_client_secret).await?;
-    let cookie_key = Key::try_from(secrets.cookie_key.as_slice())
-        .context("cookie-key credential must contain at least 64 bytes")?;
-    let internal_api_key = InternalApiKey(secrets.internal_api_key);
+    let database_url = secrets.database_url.trim();
+    let database = Database::new(database_url).await?;
+    let user_updates = UserUpdates::connect(database_url).await?;
+    let oidc = Oidc::discover(&config, secrets.oidc_client_secret.trim().to_owned()).await?;
+
+    let cookie_key = BASE64_STANDARD
+        .decode(secrets.cookie_key.trim())
+        .context("decoding COOKIE_KEY")?;
+    let cookie_key = Key::try_from(cookie_key.as_slice())
+        .context("COOKIE_KEY must decode to at least 64 bytes")?;
+    let internal_api_key = InternalApiKey(secrets.internal_api_key.trim().to_owned());
 
     let router = routes()
         .cookies()
@@ -192,9 +200,6 @@ async fn index() -> Result {
     view! {
         <main class="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-800 p-8">
             <h1 class="text-2xl font-semibold">"Zed local cloud"</h1>
-            <p class="mt-4 leading-6 text-zinc-300">
-                "This service is ready for Zed sign-in requests."
-            </p>
         </main>
     }
 }

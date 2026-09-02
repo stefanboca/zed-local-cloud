@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER EXTENSION pg_trgm UPDATE\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "1b2382643512dd103081019eb3da7433e7794236420a4ee04ffdd56d5f9bcd97"
+}
