@@ -1,8 +1,7 @@
 use serde_json::{Value, json};
-use topcoat::{
-    Result,
-    router::{content::Json, route},
-};
+use topcoat::Result;
+use topcoat::router::content::Json;
+use topcoat::router::route;
 
 #[route(GET)]
 async fn models() -> Result<Json<Value>> {

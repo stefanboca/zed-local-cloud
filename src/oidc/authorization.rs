@@ -1,9 +1,9 @@
 use std::ops::Deref;
 
+use openidconnect::core::{CoreGenderClaim, CoreResponseType};
 use openidconnect::{
     AccessTokenHash, AuthenticationFlow, AuthorizationCode, CsrfToken, Nonce, OAuth2TokenResponse,
     PkceCodeChallenge, PkceCodeVerifier, Scope, TokenResponse as _,
-    core::{CoreGenderClaim, CoreResponseType},
 };
 use rsa::RsaPublicKey;
 

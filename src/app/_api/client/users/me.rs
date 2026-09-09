@@ -1,15 +1,11 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{
-        content::Json,
-        error::{internal_server_error, unauthorized},
-        request::headers,
-        route,
-    },
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::content::Json;
+use topcoat::router::error::{internal_server_error, unauthorized};
+use topcoat::router::request::headers;
+use topcoat::router::route;
 
 use super::super::parse_authorization_header;
 use crate::database::{self, Database};

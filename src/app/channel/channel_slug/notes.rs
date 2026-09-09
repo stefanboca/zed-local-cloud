@@ -1,8 +1,7 @@
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{Body, error::rewrite, href, page, path_param},
-};
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::error::rewrite;
+use topcoat::router::{Body, href, page, path_param};
 
 #[page]
 pub(super) async fn notes(cx: &Cx) -> Result<()> {

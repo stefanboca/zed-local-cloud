@@ -1,8 +1,8 @@
 mod users;
 
 use anyhow::Context as _;
-use sqlx::{PgPool, postgres::PgPoolOptions};
-
+use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 pub use users::{AuthenticatedLocalUser, LocalUser};
 
 #[derive(Clone)]

@@ -1,8 +1,6 @@
-use topcoat::{
-    Result,
-    router::page,
-    view::{View, view},
-};
+use topcoat::Result;
+use topcoat::router::page;
+use topcoat::view::{View, view};
 
 topcoat::router::segment!(rename = "native_app_signin_succeeded");
 

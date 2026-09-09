@@ -1,17 +1,13 @@
 mod callback;
 
 use rsa::RsaPublicKey;
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    cookie::{Cookies as _, SameSite, cookie_store, private_cookies},
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::cookie::{Cookies as _, SameSite, cookie_store, private_cookies};
 use url::Url;
 
-use crate::{
-    config::Config,
-    oidc::{Oidc, OidcFlow},
-};
+use crate::config::Config;
+use crate::oidc::{Oidc, OidcFlow};
 
 pub(crate) async fn begin_oidc_flow(
     cx: &Cx,

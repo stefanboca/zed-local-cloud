@@ -1,12 +1,13 @@
 use anyhow::Context as _;
-use base64::{Engine as _, prelude::BASE64_URL_SAFE};
-use rsa::{RsaPublicKey, pkcs1::DecodeRsaPublicKey};
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{error::bad_request, page, query_params},
-    view::{View, view},
-};
+use base64::Engine as _;
+use base64::prelude::BASE64_URL_SAFE;
+use rsa::RsaPublicKey;
+use rsa::pkcs1::DecodeRsaPublicKey;
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::error::bad_request;
+use topcoat::router::{page, query_params};
+use topcoat::view::{View, view};
 
 use super::auth;
 

@@ -1,8 +1,11 @@
-use std::{env, path::PathBuf};
+use std::env;
+use std::path::PathBuf;
 
 use anyhow::anyhow;
 use clap::{Parser, Subcommand};
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use zed_local_cloud::{Config, provision, serve};
 
 #[derive(Parser)]

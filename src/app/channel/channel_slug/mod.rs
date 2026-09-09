@@ -1,11 +1,11 @@
 mod notes;
 
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{error::not_found, href, page, path_param, request::original_uri},
-    view::{PromotedStr, View, view},
-};
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::error::not_found;
+use topcoat::router::request::original_uri;
+use topcoat::router::{href, page, path_param};
+use topcoat::view::{PromotedStr, View, view};
 
 use crate::assets::ZED_LOGO;
 

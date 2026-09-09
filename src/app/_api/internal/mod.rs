@@ -1,11 +1,11 @@
 mod channel_members;
 mod users;
 
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{error::unauthorized, header, request::headers},
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::error::unauthorized;
+use topcoat::router::header;
+use topcoat::router::request::headers;
 
 use crate::config::InternalApiKey;
 

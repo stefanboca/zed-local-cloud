@@ -1,9 +1,8 @@
 use serde_json::{Value, json};
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{content::Json, route},
-};
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::content::Json;
+use topcoat::router::route;
 
 use super::validate_cached_credentials;
 

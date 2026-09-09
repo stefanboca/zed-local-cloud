@@ -1,7 +1,5 @@
-use std::{
-    sync::{Arc, LazyLock},
-    time::Duration,
-};
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use anyhow::Context as _;
 use dashmap::DashMap;

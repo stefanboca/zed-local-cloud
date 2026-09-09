@@ -1,12 +1,8 @@
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{
-        content::websocket::{Message, WebSocket, WebSocketUpgrade},
-        response::Response,
-        route,
-    },
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::content::websocket::{Message, WebSocket, WebSocketUpgrade};
+use topcoat::router::response::Response;
+use topcoat::router::route;
 
 use super::super::validate_cached_credentials;
 use crate::user_updates::{USER_UPDATED_MESSAGE, UserUpdateSubscription, UserUpdates};

@@ -1,10 +1,8 @@
-use std::{
-    collections::HashMap,
-    fs::{self, OpenOptions},
-    io::Write as _,
-    os::unix::fs::OpenOptionsExt as _,
-    path::Path,
-};
+use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write as _;
+use std::os::unix::fs::OpenOptionsExt as _;
+use std::path::Path;
 
 use anyhow::{Context as _, bail};
 

@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
 use anyhow::Context as _;
+use openidconnect::core::{
+    CoreAuthDisplay, CoreAuthPrompt, CoreErrorResponseType, CoreGenderClaim, CoreJsonWebKey,
+    CoreJweContentEncryptionAlgorithm, CoreProviderMetadata, CoreRevocableToken,
+    CoreRevocationErrorResponse, CoreTokenIntrospectionResponse, CoreTokenType,
+};
 use openidconnect::{
     AdditionalClaims, Client, ClientId, ClientSecret, EmptyExtraTokenFields, EndpointMaybeSet,
     EndpointNotSet, EndpointSet, IdTokenFields, IssuerUrl, RedirectUrl, StandardErrorResponse,
     StandardTokenResponse,
-    core::{
-        CoreAuthDisplay, CoreAuthPrompt, CoreErrorResponseType, CoreGenderClaim, CoreJsonWebKey,
-        CoreJweContentEncryptionAlgorithm, CoreProviderMetadata, CoreRevocableToken,
-        CoreRevocationErrorResponse, CoreTokenIntrospectionResponse, CoreTokenType,
-    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

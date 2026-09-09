@@ -1,12 +1,7 @@
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{
-        HeaderValue, header,
-        response::{IntoResponse, Response},
-        route,
-    },
-};
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::{HeaderValue, header, route};
 
 use crate::assets::ZED_LOGO_SVG;
 

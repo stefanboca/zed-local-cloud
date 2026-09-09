@@ -1,8 +1,6 @@
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{StatusCode, route},
-};
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::{StatusCode, route};
 
 topcoat::router::segment!(kind = CatchAll, rename = "path");
 

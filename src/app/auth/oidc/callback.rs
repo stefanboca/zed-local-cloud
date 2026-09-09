@@ -1,24 +1,19 @@
 use anyhow::Context as _;
-use base64::{Engine as _, prelude::BASE64_URL_SAFE};
+use base64::Engine as _;
+use base64::prelude::BASE64_URL_SAFE;
 use rand::RngExt as _;
 use rsa::{Oaep, RsaPublicKey};
 use sha2::Sha256;
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    cookie::{Cookies as _, SameSite, cookie_store, private_cookies},
-    router::{
-        error::{bad_request, internal_server_error, redirect},
-        page, query_params,
-    },
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::cookie::{Cookies as _, SameSite, cookie_store, private_cookies};
+use topcoat::router::error::{bad_request, internal_server_error, redirect};
+use topcoat::router::{page, query_params};
 use url::Url;
 
-use crate::{
-    config::Config,
-    database::Database,
-    oidc::{Oidc, OidcFlow},
-};
+use crate::config::Config;
+use crate::database::Database;
+use crate::oidc::{Oidc, OidcFlow};
 
 #[query_params(error = bad_request)]
 struct OidcCallbackQuery {

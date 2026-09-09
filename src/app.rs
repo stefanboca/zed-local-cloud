@@ -6,31 +6,25 @@ mod native_app_signin;
 mod native_app_signin_succeeded;
 
 use anyhow::Context as _;
-use base64::{Engine as _, prelude::BASE64_STANDARD};
-use topcoat::{
-    Result,
-    asset::{AssetBundle, RouterBuilderAssetExt},
-    context::Cx,
-    cookie::{Key, RouterBuilderCookieExt},
-    router::{
-        RouterBuilder, Slot, StatusCode, href, layout, page, response::IntoResponse,
-        tower::TowerLayer,
-    },
-    view::{StaticStr, View, error_boundary, view},
-};
-use tower_http::{
-    LatencyUnit,
-    trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnResponse, TraceLayer},
-};
+use base64::Engine as _;
+use base64::prelude::BASE64_STANDARD;
+use topcoat::Result;
+use topcoat::asset::{AssetBundle, RouterBuilderAssetExt};
+use topcoat::context::Cx;
+use topcoat::cookie::{Key, RouterBuilderCookieExt};
+use topcoat::router::response::IntoResponse;
+use topcoat::router::tower::TowerLayer;
+use topcoat::router::{RouterBuilder, Slot, StatusCode, href, layout, page};
+use topcoat::view::{StaticStr, View, error_boundary, view};
+use tower_http::LatencyUnit;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
-use crate::{
-    assets::ZED_LOGO,
-    config::{Config, InternalApiKey},
-    database::Database,
-    oidc::Oidc,
-    user_updates::UserUpdates,
-};
+use crate::assets::ZED_LOGO;
+use crate::config::{Config, InternalApiKey};
+use crate::database::Database;
+use crate::oidc::Oidc;
+use crate::user_updates::UserUpdates;
 
 topcoat::router::not_found!();
 
@@ -72,13 +66,10 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
 
 #[cfg(target_os = "linux")]
 fn notify_systemd_ready() -> std::io::Result<()> {
-    use std::{
-        env,
-        os::{
-            linux::net::SocketAddrExt as _,
-            unix::{ffi::OsStrExt as _, net::UnixDatagram},
-        },
-    };
+    use std::env;
+    use std::os::linux::net::SocketAddrExt as _;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::net::UnixDatagram;
 
     let Some(address) = env::var_os("NOTIFY_SOCKET") else {
         return Ok(());
