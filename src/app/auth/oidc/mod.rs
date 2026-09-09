@@ -13,7 +13,7 @@ use crate::{
     oidc::{Oidc, OidcFlow},
 };
 
-pub(crate) async fn begin_flow(
+pub(crate) async fn begin_oidc_flow(
     cx: &Cx,
     native_app_port: u16,
     native_app_public_key: RsaPublicKey,

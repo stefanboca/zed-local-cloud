@@ -3,6 +3,7 @@ mod llm_tokens;
 mod system_settings;
 mod users;
 
+use anyhow::Context;
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -57,17 +58,12 @@ pub(super) async fn validate_cached_credentials(cx: &Cx) -> Result<Credentials> 
     let valid = database
         .cached_token_is_valid(credentials.user_id, &credentials.access_token)
         .await
-        .map_err(|error| internal("failed to validate cached credentials", error))?;
+        .context("failed to validate cached credentials")
+        .map_err(internal_server_error)?;
     if !valid {
         return Err(unauthorized().into());
     }
     Ok(credentials)
-}
-
-fn internal(context: &'static str, error: impl Into<anyhow::Error>) -> topcoat::Error {
-    let error = error.into().context(context);
-    tracing::error!(%error, "request failed");
-    internal_server_error(error).into()
 }
 
 #[cfg(test)]

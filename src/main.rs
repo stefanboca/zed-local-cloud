@@ -32,28 +32,25 @@ async fn main() -> anyhow::Result<()> {
         Command::Provision {
             state_directory,
             livekit_api_key,
-        } => {
-            provision(&state_directory, livekit_api_key.as_deref()).await?;
-            return Ok(());
+        } => provision(&state_directory, livekit_api_key.as_deref()).await,
+        Command::Serve => {
+            let config = Config::new(arguments.config.as_deref())?;
+            let filter = EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new(&config.log_level));
+            if env::var_os("JOURNAL_STREAM").is_some() {
+                tracing_subscriber::registry()
+                    .with(filter)
+                    .with(tracing_journald::layer()?)
+                    .try_init()
+                    .map_err(|error| anyhow!("initializing journald tracing: {error}"))?;
+            } else {
+                tracing_subscriber::fmt()
+                    .with_env_filter(filter)
+                    .compact()
+                    .try_init()
+                    .map_err(|error| anyhow!("initializing terminal tracing: {error}"))?;
+            }
+            serve(config).await
         }
-        Command::Serve => {}
     }
-
-    let config = Config::new(arguments.config.as_deref())?;
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
-    if env::var_os("JOURNAL_STREAM").is_some() {
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(tracing_journald::layer()?)
-            .try_init()
-            .map_err(|error| anyhow!("initializing journald tracing: {error}"))?;
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .compact()
-            .try_init()
-            .map_err(|error| anyhow!("initializing terminal tracing: {error}"))?;
-    }
-    serve(config).await
 }

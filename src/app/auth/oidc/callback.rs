@@ -8,11 +8,9 @@ use topcoat::{
     context::{Cx, app_context},
     cookie::{Cookies as _, SameSite, cookie_store, private_cookies},
     router::{
-        HeaderValue, StatusCode,
-        error::{bad_request, internal_server_error},
-        header, page, query_params,
+        error::{bad_request, internal_server_error, redirect},
+        page, query_params,
     },
-    view::view,
 };
 use url::Url;
 
@@ -31,7 +29,7 @@ struct OidcCallbackQuery {
 }
 
 #[page]
-async fn callback(cx: &Cx) -> Result {
+async fn callback(cx: &Cx) -> Result<()> {
     let config = app_context::<Config>(cx);
     let database = app_context::<Database>(cx);
     let oidc_client = app_context::<Oidc>(cx);
@@ -72,7 +70,8 @@ async fn callback(cx: &Cx) -> Result {
             &config.oidc.admin_value,
         )
         .await
-        .map_err(|error| internal("the OIDC login failed", error))?;
+        .context("the OIDC login failed")
+        .map_err(internal_server_error)?;
 
     let local_access_token = random_access_token();
     let user_id = database
@@ -82,23 +81,21 @@ async fn callback(cx: &Cx) -> Result {
             login_result.admin,
         )
         .await
-        .map_err(|error| internal("failed to synchronize the OIDC user", error))?;
+        .context("failed to synchronize the OIDC user")
+        .map_err(internal_server_error)?;
     let encrypted_access_token =
         encrypt_access_token(&login.native_app_public_key, local_access_token.as_bytes())
-            .map_err(|error| internal("failed to encrypt the Zed access token", error))?;
+            .context("failed to encrypt the Zed access token")
+            .map_err(internal_server_error)?;
 
     let mut callback = Url::parse(&format!("http://127.0.0.1:{}/", login.native_app_port))
-        .map_err(|error| internal("failed to build the native app callback", error))?;
+        .context("failed to build the native app callback")
+        .map_err(internal_server_error)?;
     callback
         .query_pairs_mut()
         .append_pair("user_id", &user_id.to_string())
         .append_pair("access_token", &encrypted_access_token);
-    let location = HeaderValue::try_from(callback.as_str())?;
-    view! {
-        cx =>
-        (StatusCode::TEMPORARY_REDIRECT)
-        ((header::LOCATION, location))
-    }
+    Err(redirect(callback.as_str()).into())
 }
 
 fn random_access_token() -> String {
@@ -112,12 +109,6 @@ fn encrypt_access_token(public_key: &RsaPublicKey, token: &[u8]) -> anyhow::Resu
         .encrypt(&mut rand::rng(), Oaep::<Sha256>::new(), token)
         .context("RSA-OAEP encryption failed")?;
     Ok(BASE64_URL_SAFE.encode(encrypted))
-}
-
-fn internal(context: &'static str, error: impl Into<anyhow::Error>) -> topcoat::Error {
-    let error = error.into().context(context);
-    tracing::error!(%error, "request failed");
-    internal_server_error(error).into()
 }
 
 #[cfg(test)]

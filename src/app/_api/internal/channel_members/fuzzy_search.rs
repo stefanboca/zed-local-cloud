@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use topcoat::{
     Result,
@@ -39,7 +40,8 @@ async fn fuzzy_search_channel_members(
     let rows = app_context::<Database>(cx)
         .fuzzy_search_channel_members(body.channel_id, &body.query, i64::from(body.limit.min(100)))
         .await
-        .map_err(|error| internal("failed to search channel members", error))?;
+        .context("failed to search channel members")
+        .map_err(internal_server_error)?;
 
     let mut channel_members = Vec::with_capacity(rows.len());
     let mut users = Vec::with_capacity(rows.len());
@@ -65,10 +67,4 @@ async fn fuzzy_search_channel_members(
         channel_members,
         users,
     }))
-}
-
-fn internal(context: &'static str, error: impl Into<anyhow::Error>) -> topcoat::Error {
-    let error = error.into().context(context);
-    tracing::error!(%error, "request failed");
-    internal_server_error(error).into()
 }

@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use serde_json::{Value, json};
 use topcoat::{
     Result,
@@ -20,7 +21,8 @@ async fn authenticated_user(cx: &Cx) -> Result<Json<Value>> {
     let user = database
         .authenticated_user(credentials.user_id, &credentials.access_token)
         .await
-        .map_err(|error| internal("failed to load the authenticated user", error))?
+        .context("failed to load the authenticated user")
+        .map_err(internal_server_error)?
         .ok_or_else(unauthorized)?;
 
     Ok(Json(authenticated_user_response(&user)))
@@ -66,10 +68,4 @@ fn authenticated_user_response(user: &database::AuthenticatedLocalUser) -> Value
             "has_overdue_invoices": false
         }
     })
-}
-
-fn internal(context: &'static str, error: impl Into<anyhow::Error>) -> topcoat::Error {
-    let error = error.into().context(context);
-    tracing::error!(%error, "request failed");
-    internal_server_error(error).into()
 }

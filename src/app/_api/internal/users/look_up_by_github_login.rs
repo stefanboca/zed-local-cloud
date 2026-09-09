@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use topcoat::{
     Result,
@@ -29,12 +30,7 @@ async fn look_up_user_by_github_login(
     let user = app_context::<Database>(cx)
         .user_by_github_login(&body.github_login)
         .await
-        .map_err(|error| internal("failed to look up a user", error))?;
+        .context("failed to look up a user")
+        .map_err(internal_server_error)?;
     Ok(Json(UserResponse { user }))
-}
-
-fn internal(context: &'static str, error: impl Into<anyhow::Error>) -> topcoat::Error {
-    let error = error.into().context(context);
-    tracing::error!(%error, "request failed");
-    internal_server_error(error).into()
 }

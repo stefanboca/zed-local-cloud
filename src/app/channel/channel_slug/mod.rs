@@ -3,8 +3,8 @@ mod notes;
 use topcoat::{
     Result,
     context::Cx,
-    router::{error::not_found, page, path_param},
-    view::{PromotedStr, view},
+    router::{error::not_found, href, page, path_param, request::original_uri},
+    view::{PromotedStr, View, view},
 };
 
 use crate::assets::ZED_LOGO;
@@ -12,20 +12,21 @@ use crate::assets::ZED_LOGO;
 topcoat::router::path_param!(channel_slug);
 
 #[page]
-async fn channel(cx: &Cx) -> Result {
-    launch_page(cx, false).await
-}
-
-pub(super) async fn launch_page(cx: &Cx, notes: bool) -> Result {
+async fn channel(cx: &Cx) -> Result<impl View> {
     let slug = path_param::<ChannelSlug>(cx);
+
     if !valid_channel_slug(slug) {
         return Err(not_found().into());
     }
 
+    let notes_path = href!(notes::notes, ChannelSlug(slug))
+        .relative()
+        .resolve(cx);
+    let notes = original_uri(cx).path() == notes_path;
+
     let suffix = if notes { "/notes" } else { "" };
     let deep_link = format!("zed://channel/{slug}{suffix}");
-    view! {
-        cx =>
+    Ok(view! {
         <main
             class="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-800 p-8 text-center shadow-xl"
         >
@@ -49,7 +50,7 @@ pub(super) async fn launch_page(cx: &Cx, notes: bool) -> Result {
             "window.location.href = ${deep_link}.toString() + window.location.hash",
             "",
         ))
-    }
+    })
 }
 
 fn valid_channel_slug(slug: &str) -> bool {

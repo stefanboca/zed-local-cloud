@@ -5,7 +5,7 @@ use topcoat::{
     Result,
     context::Cx,
     router::{error::bad_request, page, query_params},
-    view::view,
+    view::{View, view},
 };
 
 use super::auth;
@@ -20,7 +20,7 @@ struct NativeAppSignInQuery {
 }
 
 #[page]
-pub(crate) async fn sign_in(cx: &Cx) -> Result {
+pub(crate) async fn sign_in(cx: &Cx) -> Result<impl View> {
     let query = query_params::<NativeAppSignInQuery>(cx)?;
     let _ = &query.system_id;
     if query.native_app_port == 0 {
@@ -32,7 +32,7 @@ pub(crate) async fn sign_in(cx: &Cx) -> Result {
         .await?
         .to_string();
 
-    view! {
+    Ok(view! {
         <main class="w-full max-w-lg">
             <h1 class="text-3xl italic">"Authenticating with OpenID Connect"</h1>
             <p class="mt-5 text-xl tracking-wide text-zinc-400">
@@ -40,7 +40,7 @@ pub(crate) async fn sign_in(cx: &Cx) -> Result {
             </p>
         </main>
         $(raw!("window.location.href = ${authorization_url}", ""))
-    }
+    })
 }
 
 fn decode_public_key(encoded: &str) -> anyhow::Result<RsaPublicKey> {

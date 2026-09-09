@@ -13,9 +13,10 @@ use topcoat::{
     context::Cx,
     cookie::{Key, RouterBuilderCookieExt},
     router::{
-        RouterBuilder, StatusCode, href, layout, page, response::IntoResponse, tower::TowerLayer,
+        RouterBuilder, Slot, StatusCode, href, layout, page, response::IntoResponse,
+        tower::TowerLayer,
     },
-    view::{StaticStr, View, view},
+    view::{StaticStr, View, error_boundary, view},
 };
 use tower_http::{
     LatencyUnit,
@@ -121,23 +122,8 @@ pub fn routes() -> RouterBuilder {
 }
 
 #[layout]
-async fn root_layout(cx: &Cx, slot: Result) -> Result {
-    let content = match slot {
-        Ok(content) => content,
-        Err(error) => {
-            let error_message = format!("{error:#}");
-            let status = error
-                .into_response(cx)
-                .expect("error.into_response() always returns Ok")
-                .status();
-            if status.is_server_error() {
-                tracing::error!(error = error_message, %status, "request handler failed");
-            }
-            friendly_error_page(cx, status).await?
-        }
-    };
-    view! {
-        cx =>
+async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
+    Ok(view! {
         <!DOCTYPE html>
         <html lang="en" class="scheme-dark">
             <head>
@@ -152,13 +138,17 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
             <body
                 class="grid min-h-screen place-items-center bg-zinc-900 p-6 font-sans text-zinc-50"
             >
-                (content)
+                error_boundary(fallback: |error| friendly_error_page(cx, error), (slot))
             </body>
         </html>
-    }
+    })
 }
 
-async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
+fn friendly_error_page(cx: &Cx, error: topcoat::Error) -> Result<impl View> {
+    let status = error
+        .into_response(cx)
+        .expect("error.into_response() always returns Ok")
+        .status();
     let message = match status {
         StatusCode::BAD_REQUEST => {
             "We could not complete this sign-in request. Return to Zed and try again."
@@ -168,7 +158,7 @@ async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
         StatusCode::NOT_FOUND => "The page could not be found. Check the address and try again.",
         _ => "Something went wrong. Please try again.",
     };
-    view! {
+    Ok(view! {
         cx =>
         (status)
         <main
@@ -192,14 +182,14 @@ async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
                 "Return home"
             </a>
         </main>
-    }
+    })
 }
 
 #[page]
-async fn index() -> Result {
-    view! {
+async fn index() -> Result<impl View> {
+    Ok(view! {
         <main class="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-800 p-8">
             <h1 class="text-2xl font-semibold">"Zed local cloud"</h1>
         </main>
-    }
+    })
 }

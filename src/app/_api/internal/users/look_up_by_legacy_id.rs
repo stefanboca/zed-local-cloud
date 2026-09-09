@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use topcoat::{
     Result,
@@ -29,12 +30,7 @@ async fn look_up_users_by_legacy_id(
     let users = app_context::<Database>(cx)
         .users_by_ids(&body.legacy_user_ids)
         .await
-        .map_err(|error| internal("failed to look up users", error))?;
+        .context("failed to look up users")
+        .map_err(internal_server_error)?;
     Ok(Json(UsersResponse { users }))
-}
-
-fn internal(context: &'static str, error: impl Into<anyhow::Error>) -> topcoat::Error {
-    let error = error.into().context(context);
-    tracing::error!(%error, "request failed");
-    internal_server_error(error).into()
 }

@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use topcoat::{
     Result,
@@ -30,12 +31,7 @@ async fn fuzzy_search_users(
     let users = app_context::<Database>(cx)
         .fuzzy_search_users(&body.query, i64::from(body.limit.min(100)))
         .await
-        .map_err(|error| internal("failed to search users", error))?;
+        .context("failed to search users")
+        .map_err(internal_server_error)?;
     Ok(Json(UsersResponse { users }))
-}
-
-fn internal(context: &'static str, error: impl Into<anyhow::Error>) -> topcoat::Error {
-    let error = error.into().context(context);
-    tracing::error!(%error, "request failed");
-    internal_server_error(error).into()
 }
