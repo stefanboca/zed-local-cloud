@@ -5,13 +5,9 @@ mod favicon;
 mod native_app_signin;
 mod native_app_signin_succeeded;
 
-use anyhow::Context as _;
-use base64::Engine as _;
-use base64::prelude::BASE64_STANDARD;
 use topcoat::Result;
 use topcoat::asset::{AssetBundle, RouterBuilderAssetExt};
 use topcoat::context::Cx;
-use topcoat::cookie::{Key, RouterBuilderCookieExt};
 use topcoat::router::response::IntoResponse;
 use topcoat::router::tower::TowerLayer;
 use topcoat::router::{RouterBuilder, Slot, StatusCode, href, layout, page};
@@ -21,77 +17,8 @@ use tower_http::trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnResponse, Tr
 use tracing::Level;
 
 use crate::assets::ZED_LOGO;
-use crate::config::{Config, InternalApiKey};
-use crate::database::Database;
-use crate::oidc::Oidc;
-use crate::user_updates::UserUpdates;
 
 topcoat::router::not_found!();
-
-pub async fn serve(config: Config) -> anyhow::Result<()> {
-    let secrets = config.secrets()?;
-
-    let bind_address = config.bind_address;
-    let database_url = secrets.database_url.trim();
-    let database = Database::new(database_url).await?;
-    let user_updates = UserUpdates::connect(database_url).await?;
-    let oidc = Oidc::discover(&config, secrets.oidc_client_secret.trim().to_owned()).await?;
-
-    let cookie_key = BASE64_STANDARD
-        .decode(secrets.cookie_key.trim())
-        .context("decoding COOKIE_KEY")?;
-    let cookie_key = Key::try_from(cookie_key.as_slice())
-        .context("COOKIE_KEY must decode to at least 64 bytes")?;
-    let internal_api_key = InternalApiKey(secrets.internal_api_key.trim().to_owned());
-
-    let router = routes()
-        .cookies()
-        .app_context(cookie_key)
-        .app_context(config)
-        .app_context(database)
-        .app_context(internal_api_key)
-        .app_context(oidc)
-        .app_context(user_updates)
-        .build();
-
-    let listener = tokio::net::TcpListener::bind(bind_address)
-        .await
-        .with_context(|| format!("failed to bind {bind_address}"))?;
-    notify_systemd_ready().context("failed to notify systemd that the service is ready")?;
-    tracing::info!(%bind_address, "Zed local cloud listening");
-    topcoat::serve(listener, router)
-        .await
-        .context("HTTP server failed")
-}
-
-#[cfg(target_os = "linux")]
-fn notify_systemd_ready() -> std::io::Result<()> {
-    use std::env;
-    use std::os::linux::net::SocketAddrExt as _;
-    use std::os::unix::ffi::OsStrExt as _;
-    use std::os::unix::net::UnixDatagram;
-
-    let Some(address) = env::var_os("NOTIFY_SOCKET") else {
-        return Ok(());
-    };
-    let address = address.as_os_str().as_bytes();
-    let socket = UnixDatagram::unbound()?;
-    if let Some(abstract_name) = address.strip_prefix(b"@") {
-        let address = std::os::unix::net::SocketAddr::from_abstract_name(abstract_name)?;
-        socket.send_to_addr(b"READY=1", &address)?;
-    } else {
-        socket.send_to(
-            b"READY=1",
-            std::path::Path::new(std::ffi::OsStr::from_bytes(address)),
-        )?;
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn notify_systemd_ready() -> std::io::Result<()> {
-    Ok(())
-}
 
 pub fn routes() -> RouterBuilder {
     topcoat::router::module_router!()

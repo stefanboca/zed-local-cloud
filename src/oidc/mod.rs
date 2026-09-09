@@ -1,6 +1,9 @@
+mod authorization;
+
 use std::collections::HashMap;
 
 use anyhow::Context as _;
+pub use authorization::OidcFlow;
 use openidconnect::core::{
     CoreAuthDisplay, CoreAuthPrompt, CoreErrorResponseType, CoreGenderClaim, CoreJsonWebKey,
     CoreJweContentEncryptionAlgorithm, CoreProviderMetadata, CoreRevocableToken,
@@ -16,10 +19,6 @@ use serde_json::Value;
 use url::Url;
 
 use crate::config::Config;
-
-mod authorization;
-
-pub use authorization::OidcFlow;
 
 pub struct OidcAuthorization {
     pub url: Url,
