@@ -21,7 +21,7 @@ This README uses ASD-STE100 Simplified Technical English (STE).
 ## Compatibility baseline
 
 The project uses
-[Zed v1.17.2](https://github.com/zed-industries/zed/tree/v1.17.2) as its
+[Zed v1.19.2](https://github.com/zed-industries/zed/tree/v1.19.2) as its
 compatibility baseline. This is the Zed release packaged by the current
 nixpkgs input.
 
