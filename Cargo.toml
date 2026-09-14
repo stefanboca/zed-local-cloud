@@ -30,9 +30,8 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"
 uuid = "1.26.0"
 
-[build-dependencies]
-topcoat = { version = "*", default-features = false, features = ["tailwind"] }
-
-[target."cfg(false)".dependencies]
 # add the native roots feature to reqwest pulled in by openidconnect
 reqwest = { version = "*", default-features = false, features = ["rustls-tls-native-roots"] }
+
+[build-dependencies]
+topcoat = { version = "*", default-features = false, features = ["tailwind"] }
