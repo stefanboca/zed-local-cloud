@@ -459,6 +459,7 @@ in {
             RestartSec = 5;
             RuntimeDirectory = "zed-collab";
             RuntimeDirectoryMode = "0700";
+            SyslogIdentifier = "collab";
             User = cfg.user;
             WorkingDirectory = "${cfg.package}/share/zed-local-cloud";
           };

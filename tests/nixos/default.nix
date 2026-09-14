@@ -238,6 +238,9 @@ in {
       assert "run" in collab_command, collab_command
       assert "--scope" in collab_command, collab_command
       assert "collab" in collab_command, collab_command
+      assert machine.succeed(
+          "systemctl show zed-collab.service --property=SyslogIdentifier --value"
+      ).strip() == "collab"
       collab_pid = machine.succeed(
           f"pgrep --parent {collab_wrapper_pid}"
       ).strip()
