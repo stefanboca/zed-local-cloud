@@ -1,10 +1,7 @@
-mod notes;
-
 use topcoat::Result;
 use topcoat::context::Cx;
 use topcoat::router::error::not_found;
-use topcoat::router::request::original_uri;
-use topcoat::router::{href, page, path_param};
+use topcoat::router::{page, path_param};
 use topcoat::view::{PromotedStr, View, view};
 
 use crate::assets::ZED_LOGO;
@@ -13,20 +10,25 @@ topcoat::router::path_param!(channel_slug);
 
 #[page]
 async fn channel(cx: &Cx) -> Result<impl View> {
+    launch_page(cx, false).await
+}
+
+#[page("./notes")]
+async fn notes(cx: &Cx) -> Result<impl View> {
+    launch_page(cx, true).await
+}
+
+async fn launch_page(cx: &Cx, is_notes: bool) -> Result<impl View> {
     let slug = path_param::<ChannelSlug>(cx);
 
     if !valid_channel_slug(slug) {
         return Err(not_found().into());
     }
 
-    let notes_path = href!(notes::notes, ChannelSlug(slug))
-        .relative()
-        .resolve(cx);
-    let notes = original_uri(cx).path() == notes_path;
-
-    let suffix = if notes { "/notes" } else { "" };
+    let suffix = if is_notes { "/notes" } else { "" };
     let deep_link = format!("zed://channel/{slug}{suffix}");
     Ok(view! {
+        cx =>
         <main
             class="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-800 p-8 text-center shadow-xl"
         >
@@ -39,7 +41,7 @@ async fn channel(cx: &Cx) -> Result<impl View> {
                 class="mt-6 inline-flex rounded-lg bg-violet-600 px-4 py-2 font-semibold text-white hover:bg-violet-700"
                 href=(deep_link.clone())
             >
-                (if notes {
+                (if is_notes {
                     PromotedStr(&"Open channel notes")
                 } else {
                     PromotedStr(&"Open channel")

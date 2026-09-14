@@ -10,6 +10,7 @@ use topcoat::context::Cx;
 use topcoat::router::response::IntoResponse;
 use topcoat::router::tower::TowerLayer;
 use topcoat::router::{RouterBuilder, Slot, StatusCode, href, layout, page};
+use topcoat::runtime::RouterBuilderRuntimeExt as _;
 use topcoat::view::{StaticStr, View, error_boundary, view};
 use tower_http::LatencyUnit;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnResponse, TraceLayer};
@@ -21,6 +22,7 @@ topcoat::router::not_found!();
 
 pub fn routes() -> RouterBuilder {
     topcoat::router::module_router!()
+        .runtime()
         .layer(TowerLayer::new(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))

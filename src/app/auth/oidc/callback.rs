@@ -8,7 +8,7 @@ use topcoat::Result;
 use topcoat::context::{Cx, app_context};
 use topcoat::cookie::{Cookies as _, SameSite, cookie_store, private_cookies};
 use topcoat::router::error::{bad_request, internal_server_error, redirect};
-use topcoat::router::{page, query_params};
+use topcoat::router::{query_params, route};
 use url::Url;
 
 use crate::config::Config;
@@ -23,7 +23,7 @@ struct OidcCallbackQuery {
     error_description: Option<String>,
 }
 
-#[page]
+#[route(GET)]
 async fn callback(cx: &Cx) -> Result<()> {
     let config = app_context::<Config>(cx);
     let database = app_context::<Database>(cx);

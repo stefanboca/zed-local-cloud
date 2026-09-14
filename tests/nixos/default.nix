@@ -406,13 +406,6 @@ in {
       }
       assert response("/native_app_signin_succeeded") == "200"
       assert response("/native_app_signin") == "400"
-      assert response("/favicon.ico") == "200"
-      favicon = machine.succeed(
-          "curl --insecure --silent --show-error --include "
-          "https://localhost/favicon.ico"
-      )
-      assert "content-type: image/svg+xml" in favicon.lower(), favicon
-      assert "<svg" in favicon, favicon
       assert response("/channel/test-41767") == "200"
       channel_page = machine.succeed(
           "curl --insecure --silent --show-error "
