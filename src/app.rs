@@ -1,7 +1,6 @@
 mod _api;
 mod auth;
 mod channel;
-mod favicon;
 mod native_app_signin;
 mod native_app_signin_succeeded;
 
