@@ -21,7 +21,7 @@ This README uses ASD-STE100 Simplified Technical English (STE).
 ## Compatibility baseline
 
 The project uses
-[Zed v1.19.2](https://github.com/zed-industries/zed/tree/v1.19.2) as its
+[Zed v1.20.1](https://github.com/zed-industries/zed/tree/v1.20.1) as its
 compatibility baseline. This is the Zed release packaged by the current
 nixpkgs input.
 
@@ -436,7 +436,11 @@ The collaboration server uses the shared internal API key as a Bearer token.
 Users appear in local search results only after their first local OIDC login.
 The `/client/users/connect` route uses PostgreSQL `LISTEN` and `NOTIFY`. Each
 client receives updates only for its signed-in user. This works across multiple
-local cloud processes.
+local cloud processes. The route sends the cloud WebSocket `UserUpdated`
+message after a local profile or administrator status changes. The baseline
+also defines a `NotificationsUpdated` message, but its client does not act on
+that message. This service does not send it. Add it only if a later Zed client
+uses it and the local cloud supplies the related notification state and API.
 
 ## Configuration
 

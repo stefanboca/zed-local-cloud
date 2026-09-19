@@ -11,6 +11,7 @@
 
   livekitApiKey = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   livekitApiSecret = "zed-livekit-secret-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij";
+  zedVersion = zed-collab.version;
   livekitKeysText = ''
     unrelated-application: unrelated-secret-0123456789abcdef
     ${livekitApiKey}: ${livekitApiSecret}
@@ -377,10 +378,10 @@ in {
       ), extension_download
       release_asset = json.loads(machine.succeed(
           "curl --insecure --silent --show-error "
-          "'https://localhost/releases/stable/1.19.2/asset?asset=zed-remote-server'"
+          "'https://localhost/releases/stable/${zedVersion}/asset?asset=zed-remote-server'"
       ))
       assert release_asset["path"] == (
-          "/releases/stable/1.19.2/asset"
+          "/releases/stable/${zedVersion}/asset"
       ), release_asset
       assert release_asset["query"] == {
           "asset": ["zed-remote-server"]
@@ -523,7 +524,7 @@ in {
           "--command='SELECT count(*) FROM local_user_tokens WHERE user_id = 1'"
       ).strip() == "2"
 
-      known_token = "zed-1.19.2-contract-token"
+      known_token = "zed-contract-token"
       known_token_hash = hashlib.sha256(known_token.encode()).hexdigest()
       insert_token = (
           "INSERT INTO local_user_tokens (user_id, access_token_hash) "

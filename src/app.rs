@@ -7,6 +7,7 @@ mod native_app_signin_succeeded;
 use topcoat::Result;
 use topcoat::asset::{AssetBundle, RouterBuilderAssetExt};
 use topcoat::context::Cx;
+use topcoat::router::error::{RedirectError, RewriteError};
 use topcoat::router::response::IntoResponse;
 use topcoat::router::tower::TowerLayer;
 use topcoat::router::{RouterBuilder, Slot, StatusCode, href, layout, page};
@@ -64,14 +65,16 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
 }
 
 fn friendly_error_page(cx: &Cx, error: topcoat::Error) -> Result<impl View> {
+    if error.downcast_ref::<RedirectError>().is_some()
+        || error.downcast_ref::<RewriteError>().is_some()
+    {
+        return Err(error);
+    }
     let status = error
         .into_response(cx)
         .expect("error.into_response() always returns Ok")
         .status();
     let message = match status {
-        StatusCode::BAD_REQUEST => {
-            "We could not complete this sign-in request. Return to Zed and try again."
-        }
         StatusCode::UNAUTHORIZED => "Sign in and try again.",
         StatusCode::FORBIDDEN => "Your account is not allowed to perform that action.",
         StatusCode::NOT_FOUND => "The page could not be found. Check the address and try again.",
