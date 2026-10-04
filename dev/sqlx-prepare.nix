@@ -3,10 +3,6 @@
   pkgs,
 }: let
   inherit (lib.meta) getExe;
-  gcc =
-    if lib.versionOlder pkgs.gcc.version "16"
-    then pkgs.gcc16
-    else lib.warn "zed-sqlx-prepare: remove the GCC 16 fallback" pkgs.gcc;
 in
   pkgs.writeShellApplication {
     name = "zed-sqlx-prepare";
