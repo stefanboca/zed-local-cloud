@@ -460,9 +460,15 @@ in {
           )
           assert "Authenticating with OpenID Connect" in login_page
           assert "You will automatically be redirected" in login_page
-          redirect = re.search(r'cx\.hydrate\((.*?)\)', login_page)
+          redirect = re.search(
+              r'<a\b[^>]*\bid="oidc-authorization"[^>]*\bhref="([^"]+)"',
+              login_page,
+          )
           assert redirect is not None, login_page
-          authorization_url = json.loads(html.unescape(redirect.group(1)))
+          authorization_url = html.unescape(redirect.group(1))
+          assert (
+              "window.location.href = document.getElementById('oidc-authorization').href;"
+          ) in login_page, login_page
           assert authorization_url.startswith(
               "http://127.0.0.1:18080/oauth2/authorize?"
           ), authorization_url

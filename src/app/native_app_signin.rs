@@ -40,7 +40,10 @@ pub(crate) async fn sign_in(cx: &Cx) -> Result<impl View> {
                 "You will automatically be redirected."
             </p>
         </main>
-        $(raw!("window.location.href = ${authorization_url}", ""))
+        <a id="oidc-authorization" hidden="" href=(authorization_url)></a>
+        <script>
+            "window.location.href = document.getElementById('oidc-authorization').href;"
+        </script>
     })
 }
 
