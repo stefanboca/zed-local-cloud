@@ -6,27 +6,29 @@ use topcoat::view::{PromotedStr, View, view};
 
 use crate::assets::ZED_LOGO;
 
-topcoat::router::path_param!(channel_slug);
+topcoat::router::path_param!(channel);
 
-#[page]
+#[page("./{channel}")]
 async fn channel(cx: &Cx) -> Result<impl View> {
-    launch_page(cx, false).await
+    launch_page(cx, "", &"Open channel").await
 }
 
-#[page("./notes")]
+#[page("./{channel}/notes")]
 async fn notes(cx: &Cx) -> Result<impl View> {
-    launch_page(cx, true).await
+    launch_page(cx, "/notes", &"Open channel notes").await
 }
 
-async fn launch_page(cx: &Cx, is_notes: bool) -> Result<impl View> {
-    let slug = path_param::<ChannelSlug>(cx);
+async fn launch_page(
+    cx: &Cx,
+    suffix: &'static str,
+    message: &'static &'static str,
+) -> Result<impl View> {
+    let slug = path_param::<Channel>(cx);
 
     if !valid_channel_slug(slug) {
         return Err(not_found().into());
     }
 
-    let suffix = if is_notes { "/notes" } else { "" };
-    let deep_link = format!("zed://channel/{slug}{suffix}");
     Ok(view! {
         cx =>
         <main
@@ -39,19 +41,15 @@ async fn launch_page(cx: &Cx, is_notes: bool) -> Result<impl View> {
             </p>
             <a
                 class="mt-6 inline-flex rounded-lg bg-violet-600 px-4 py-2 font-semibold text-white hover:bg-violet-700"
-                href=(deep_link.clone())
+                id="open-channel"
+                href=(format!("zed://channel/{slug}{suffix}"))
             >
-                (if is_notes {
-                    PromotedStr(&"Open channel notes")
-                } else {
-                    PromotedStr(&"Open channel")
-                })
+                (PromotedStr(message))
             </a>
         </main>
-        $(raw!(
-            "window.location.href = ${deep_link}.toString() + window.location.hash",
-            "",
-        ))
+        <script>
+            "window.location.href = document.getElementById('open-channel').href + window.location.hash;"
+        </script>
     })
 }
 

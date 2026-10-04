@@ -417,11 +417,10 @@ in {
       )
       assert "zed://channel/test-41767" in channel_page, channel_page
       assert "Launching Zed" in channel_page, channel_page
-      assert re.search(
-          r"window\.location\.href = __external\d+\.toString\(\) "
-          r"\+ window\.location\.hash",
-          html.unescape(channel_page),
-      ), channel_page
+      assert (
+          "window.location.href = document.getElementById('open-channel').href"
+          " + window.location.hash;"
+      ) in html.unescape(channel_page), channel_page
       assert response("/channel/test-41767/notes") == "200"
       notes_page = machine.succeed(
           "curl --insecure --silent --show-error "

@@ -23,7 +23,6 @@ topcoat::router::not_found!();
 
 pub fn routes() -> RouterBuilder {
     topcoat::router::module_router!()
-        .runtime()
         .layer(TowerLayer::new(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
@@ -39,6 +38,7 @@ pub fn routes() -> RouterBuilder {
                 ),
         ))
         .assets(AssetBundle::load().expect("failed to load the Topcoat asset bundle"))
+        .runtime()
 }
 
 #[layout]
