@@ -33,6 +33,7 @@ in
 
     # Let Topcoat own the Cargo build so it can bundle the exact artifact it
     # produced without launching a second build.
+    # TODO: check if this can be simplified once topcoat-cli 0.10.0 reaches nixpkgs
     buildPhase = ''
       runHook preBuild
       topcoat asset bundle --release --bin zed-local-cloud

@@ -1,10 +1,9 @@
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
-use topcoat::Result;
 use topcoat::context::{Cx, app_context};
 use topcoat::router::content::Json;
-use topcoat::router::error::internal_server_error;
 use topcoat::router::route;
+use topcoat::{Error, Result};
 
 use super::super::require_internal_api;
 use crate::database::{Database, LocalUser};
@@ -41,7 +40,7 @@ async fn fuzzy_search_channel_members(
         .fuzzy_search_channel_members(body.channel_id, &body.query, i64::from(body.limit.min(100)))
         .await
         .context("failed to search channel members")
-        .map_err(internal_server_error)?;
+        .map_err(Error::from_anyhow)?;
 
     let mut channel_members = Vec::with_capacity(rows.len());
     let mut users = Vec::with_capacity(rows.len());

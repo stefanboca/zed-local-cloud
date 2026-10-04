@@ -1,11 +1,11 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use topcoat::Result;
 use topcoat::context::{Cx, app_context};
 use topcoat::router::content::Json;
-use topcoat::router::error::{internal_server_error, unauthorized};
+use topcoat::router::error::unauthorized;
 use topcoat::router::request::headers;
 use topcoat::router::route;
+use topcoat::{Error, Result};
 
 use super::super::parse_authorization_header;
 use crate::database::{self, Database};
@@ -18,7 +18,7 @@ async fn authenticated_user(cx: &Cx) -> Result<Json<Value>> {
         .authenticated_user(credentials.user_id, &credentials.access_token)
         .await
         .context("failed to load the authenticated user")
-        .map_err(internal_server_error)?
+        .map_err(Error::from_anyhow)?
         .ok_or_else(unauthorized)?;
 
     Ok(Json(authenticated_user_response(&user)))

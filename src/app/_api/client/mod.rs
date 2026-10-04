@@ -4,11 +4,11 @@ mod system_settings;
 mod users;
 
 use anyhow::Context;
-use topcoat::Result;
 use topcoat::context::{Cx, app_context};
-use topcoat::router::error::{internal_server_error, unauthorized};
+use topcoat::router::error::unauthorized;
 use topcoat::router::request::headers;
 use topcoat::router::{HeaderMap, header};
+use topcoat::{Error, Result};
 
 use crate::database::Database;
 
@@ -54,7 +54,7 @@ pub(super) async fn validate_cached_credentials(cx: &Cx) -> Result<Credentials> 
         .cached_token_is_valid(credentials.user_id, &credentials.access_token)
         .await
         .context("failed to validate cached credentials")
-        .map_err(internal_server_error)?;
+        .map_err(Error::from_anyhow)?;
     if !valid {
         return Err(unauthorized().into());
     }

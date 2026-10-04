@@ -4,11 +4,11 @@ use base64::prelude::BASE64_URL_SAFE;
 use rand::RngExt as _;
 use rsa::{Oaep, RsaPublicKey};
 use sha2::Sha256;
-use topcoat::Result;
 use topcoat::context::{Cx, app_context};
 use topcoat::cookie::{Cookies as _, SameSite, cookie_store, private_cookies};
-use topcoat::router::error::{bad_request, internal_server_error, redirect};
+use topcoat::router::error::{bad_request, redirect};
 use topcoat::router::{query_params, route};
+use topcoat::{Error, Result};
 use url::Url;
 
 use crate::config::Config;
@@ -66,7 +66,7 @@ async fn callback(cx: &Cx) -> Result<()> {
         )
         .await
         .context("the OIDC login failed")
-        .map_err(internal_server_error)?;
+        .map_err(Error::from_anyhow)?;
 
     let local_access_token = random_access_token();
     let user_id = database
@@ -77,15 +77,15 @@ async fn callback(cx: &Cx) -> Result<()> {
         )
         .await
         .context("failed to synchronize the OIDC user")
-        .map_err(internal_server_error)?;
+        .map_err(Error::from_anyhow)?;
     let encrypted_access_token =
         encrypt_access_token(&login.native_app_public_key, local_access_token.as_bytes())
             .context("failed to encrypt the Zed access token")
-            .map_err(internal_server_error)?;
+            .map_err(Error::from_anyhow)?;
 
     let mut callback = Url::parse(&format!("http://127.0.0.1:{}/", login.native_app_port))
         .context("failed to build the native app callback")
-        .map_err(internal_server_error)?;
+        .map_err(Error::from_anyhow)?;
     callback
         .query_pairs_mut()
         .append_pair("user_id", &user_id.to_string())

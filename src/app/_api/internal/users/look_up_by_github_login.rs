@@ -1,10 +1,9 @@
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
-use topcoat::Result;
 use topcoat::context::{Cx, app_context};
 use topcoat::router::content::Json;
-use topcoat::router::error::internal_server_error;
 use topcoat::router::route;
+use topcoat::{Error, Result};
 
 use super::super::require_internal_api;
 use crate::database::{Database, LocalUser};
@@ -31,6 +30,6 @@ async fn look_up_user_by_github_login(
         .user_by_github_login(&body.github_login)
         .await
         .context("failed to look up a user")
-        .map_err(internal_server_error)?;
+        .map_err(Error::from_anyhow)?;
     Ok(Json(UserResponse { user }))
 }
